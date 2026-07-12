@@ -19,3 +19,17 @@ pnpm workspace monorepo: `apps/cli` (the tool), `apps/web` (site + docs), `packa
 - Commits: atomic, lowercase, terse, no body (`feat: …`, `fix: …`, `polish: …`).
 - Vitest, colocated `*.test.ts`, prefer real integrations over mocks.
 - Hard-cut policy: one canonical current-state path, no compatibility bridges or fallback paths unless explicitly requested.
+
+## Agent skills
+
+### Issue tracker
+
+GitHub Issues on this repo; external PRs are not a triage surface. Planning runs wayfinder-style (map + sub-issue tickets, native dependencies). See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+Canonical defaults (`needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, `wontfix`). See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Single-context: `CONTEXT.md` + `docs/adr/` at the repo root, created lazily. See `docs/agents/domain.md`.
