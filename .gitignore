@@ -7,3 +7,4 @@ dist/
 CLAUDE.local.md
 .claude/settings.local.json
 .scratch/
+.pnpm-store/

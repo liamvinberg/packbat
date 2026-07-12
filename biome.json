@@ -1,12 +1,17 @@
 {
-	"$schema": "https://biomejs.dev/schemas/2.0.0/schema.json",
+	"$schema": "https://biomejs.dev/schemas/2.5.3/schema.json",
+	"vcs": {
+		"enabled": true,
+		"clientKind": "git",
+		"useIgnoreFile": true
+	},
 	"formatter": {
 		"indentStyle": "tab",
 		"lineWidth": 120
 	},
 	"linter": {
 		"rules": {
-			"recommended": true,
+			"preset": "recommended",
 			"suspicious": {
 				"noExplicitAny": "error"
 			},

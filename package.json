@@ -6,6 +6,12 @@
 		"node": ">=22"
 	},
 	"scripts": {
-		"check": "biome check ."
+		"build": "pnpm -r build",
+		"check": "biome check .",
+		"test": "pnpm -r test",
+		"typecheck": "pnpm -r typecheck"
+	},
+	"devDependencies": {
+		"@biomejs/biome": "^2.5.3"
 	}
 }
