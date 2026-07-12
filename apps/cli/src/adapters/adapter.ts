@@ -62,8 +62,8 @@ export interface HarnessAdapter {
 export interface UnsupportedStore {
 	id: "opencode" | "gemini" | "cursor";
 	displayName: string;
-	/** The axis that gates support (e.g. opencode is db-snapshot). */
-	mutationModel: MutationModel;
+	/** The axis that gates support (e.g. opencode is db-snapshot); Cursor does not disclose its persistence. */
+	mutationModel: MutationModel | "undisclosed";
 	/** The discovered store path when present on this machine, else null. */
 	detect(env: NodeJS.ProcessEnv, home: string): string | null;
 }
