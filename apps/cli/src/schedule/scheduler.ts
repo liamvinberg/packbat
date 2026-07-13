@@ -43,6 +43,8 @@ export interface ScheduleActivationOptions {
 	env: NodeJS.ProcessEnv;
 }
 
+type ScheduleKind = "launchd" | "systemd" | "cron";
+
 function commandOnPath(command: string, env: NodeJS.ProcessEnv): string | null {
 	for (const directory of (env.PATH ?? "").split(delimiter)) {
 		if (directory === "") {
@@ -195,18 +197,40 @@ async function installCron(options: ScheduleInstallOptions): Promise<ScheduleIns
 	return { artifactPaths: [path], notes: [] };
 }
 
+function scheduleKind(env: NodeJS.ProcessEnv): ScheduleKind {
+	if (process.platform === "darwin") {
+		return "launchd";
+	}
+	if (process.platform === "linux") {
+		return commandOnPath("systemctl", env) === null ? "cron" : "systemd";
+	}
+	throw new BlotterError(`scheduling is not supported on ${process.platform}`);
+}
+
+export function previewSchedule(options: ScheduleInstallOptions): ScheduleInstallResult {
+	assertAbsoluteCommand(options);
+	switch (scheduleKind(options.env)) {
+		case "launchd":
+			return { artifactPaths: [launchdPath(options.userHome)], notes: [] };
+		case "systemd": {
+			const paths = systemdPaths(options.userHome);
+			return { artifactPaths: [paths.service, paths.timer], notes: [] };
+		}
+		case "cron":
+			return { artifactPaths: [cronArtifactPath(options.statePath)], notes: [] };
+	}
+}
+
 export async function installSchedule(options: ScheduleInstallOptions): Promise<ScheduleInstallResult> {
 	assertAbsoluteCommand(options);
-	let result: ScheduleInstallResult;
-	if (process.platform === "darwin") {
-		result = await installLaunchd(options);
-	} else if (process.platform === "linux") {
-		const systemctl = commandOnPath("systemctl", options.env);
-		result = systemctl === null ? await installCron(options) : await installSystemd(options);
-	} else {
-		throw new BlotterError(`scheduling is not supported on ${process.platform}`);
+	switch (scheduleKind(options.env)) {
+		case "launchd":
+			return await installLaunchd(options);
+		case "systemd":
+			return await installSystemd(options);
+		case "cron":
+			return await installCron(options);
 	}
-	return result;
 }
 
 async function stripInstalledCron(statePath: string, env: NodeJS.ProcessEnv): Promise<void> {

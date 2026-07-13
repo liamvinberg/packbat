@@ -7,7 +7,20 @@ import { appendLog } from "../core/log.js";
 import { writeRunStamps } from "../core/stamps.js";
 import { publishOffbox, remindOffboxSkipped } from "../offbox/outbox.js";
 
-export async function runSync(_argv: string[]): Promise<number> {
+export interface SyncOutputOptions {
+	writeSummary?: boolean;
+	onSummary?: (summary: string) => void;
+	onBusy?: () => void;
+}
+
+function reportSummary(summary: string, options: SyncOutputOptions): void {
+	options.onSummary?.(summary);
+	if (options.writeSummary !== false) {
+		process.stdout.write(`${summary}\n`);
+	}
+}
+
+export async function runSync(_argv: string[], output: SyncOutputOptions = {}): Promise<number> {
 	const home = resolveHome();
 	const config = loadConfig(home);
 	assertZstdSupport();
@@ -61,11 +74,12 @@ export async function runSync(_argv: string[]): Promise<number> {
 		if (offboxError !== undefined) {
 			process.stderr.write(`blotter sync: off-box: ${offboxError}\n`);
 		}
-		process.stdout.write(`${summary}\n`);
+		reportSummary(summary, output);
 		return ok && offboxError === undefined ? 0 : 1;
 	});
 	if (!locked.acquired) {
-		process.stdout.write("sync already running\n");
+		output.onBusy?.();
+		reportSummary("sync already running", output);
 		return 0;
 	}
 	return locked.value;

@@ -44,7 +44,9 @@ describe("blotter init", () => {
 		expect(result.stdout).toContain(`found, not yet supported: Cursor CLI (${join(home, ".cursor")})`);
 		expect(result.stdout).toContain(`archive: ${archiveRoot}`);
 		expect(result.stdout).toContain("archived 5, unchanged 0, failed 0");
-		expect(result.stdout).toContain("blotter doctor");
+		expect(result.stdout).toContain("installed: launchd schedule matches");
+		expect(result.stdout).toContain("live: launchd job is not loaded");
+		expect(result.stdout).toContain("problems:");
 
 		const config = JSON.parse(await readFile(join(blotterHome, "config.json"), "utf8")) as Record<string, unknown>;
 		expect(config).toEqual({
@@ -204,7 +206,7 @@ describe("blotter init", () => {
 		const interactive = await runCli(["init"], { home });
 		expect(interactive.code).toBe(1);
 		expect(interactive.stderr.trim().split("\n")).toEqual([
-			"blotter init: interactive setup is coming later; run `blotter init --yes`",
+			"blotter init: stdin is not a TTY; run `blotter init --yes`",
 		]);
 
 		const invalid = await runCli(["init", "--yes", "--wat"], { home });

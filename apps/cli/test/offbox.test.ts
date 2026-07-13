@@ -191,7 +191,9 @@ describe.skipIf(!hasRclone)("off-box archive cycle", () => {
 		);
 
 		expect(initialized.code).toBe(0);
-		expect(await readFile(join(layout.blotterHome, "rclone.conf"), "utf8")).toBe("");
+		const managedConfigPath = join(layout.blotterHome, "rclone.conf");
+		expect(await readFile(managedConfigPath, "utf8")).toBe("");
+		expect((await stat(managedConfigPath)).mode & 0o777).toBe(0o600);
 		const config = JSON.parse(await readFile(join(layout.blotterHome, "config.json"), "utf8")) as {
 			machine: string;
 		};
@@ -364,7 +366,7 @@ describe.skipIf(!hasRclone)("off-box archive cycle", () => {
 			renderRecoveryKit({
 				identity,
 				recipient,
-				destination: layout.remote,
+				remote: { type: "rclone", destination: layout.remote },
 				createdAt: "2026-07-13T10:11:12.000Z",
 			}),
 		);

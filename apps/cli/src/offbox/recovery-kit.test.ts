@@ -6,7 +6,13 @@ describe("recovery kit", () => {
 		const kit = renderRecoveryKit({
 			identity: "AGE-SECRET-KEY-1SYNTHETICIDENTITY",
 			recipient: "age1syntheticrecipient12345678",
-			destination: "backup:blotter/archive",
+			remote: {
+				type: "s3-compatible",
+				destination: "backup:blotter/archive",
+				endpoint: "https://objects.example.com",
+				bucket: "blotter",
+				prefix: "archive",
+			},
 			createdAt: "2026-07-13T10:11:12.000Z",
 		});
 
@@ -21,8 +27,12 @@ AGE-SECRET-KEY-1SYNTHETICIDENTITY
 Age recipient
 age1syntheticrecipient12345678
 
-Remote destination
-backup:blotter/archive
+Remote
+type: s3-compatible
+endpoint: https://objects.example.com
+bucket: blotter
+prefix: archive
+destination: backup:blotter/archive
 
 Fresh-machine setup
 Configure rclone access to backup:blotter/archive, then run:

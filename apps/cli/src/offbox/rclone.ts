@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
 import { constants } from "node:fs";
-import { access, mkdir, open } from "node:fs/promises";
+import { access, chmod, mkdir, open } from "node:fs/promises";
 import { delimiter, dirname, join } from "node:path";
 import { BlotterError } from "../core/errors.js";
 import { resolveHome } from "../core/home.js";
@@ -36,14 +36,19 @@ async function managedConfigArguments(mode: RcloneConfigMode): Promise<string[]>
 	await mkdir(dirname(configPath), { recursive: true });
 	const handle = await open(configPath, "a", 0o600);
 	await handle.close();
+	await chmod(configPath, 0o600);
 	return ["--config", configPath];
 }
 
-async function runRclone(command: "copy" | "copyto", source: string, destination: string, mode: RcloneConfigMode) {
+async function runRclone(
+	command: "copy" | "copyto" | "lsjson",
+	args: string[],
+	mode: RcloneConfigMode,
+): Promise<string> {
 	const executable = await discoverRclone();
 	const configArguments = await managedConfigArguments(mode);
-	await new Promise<void>((resolve, reject) => {
-		const child = spawn(executable, [command, ...configArguments, source, destination], {
+	return await new Promise<string>((resolve, reject) => {
+		const child = spawn(executable, [command, ...configArguments, ...args], {
 			env: process.env,
 			stdio: ["ignore", "pipe", "pipe"],
 		});
@@ -59,7 +64,7 @@ async function runRclone(command: "copy" | "copyto", source: string, destination
 		});
 		child.on("close", (code) => {
 			if (code === 0) {
-				resolve();
+				resolve(output);
 				return;
 			}
 			reject(new BlotterError(`rclone ${command} failed${output.trim() === "" ? "" : `: ${output.trim()}`}`));
@@ -68,11 +73,29 @@ async function runRclone(command: "copy" | "copyto", source: string, destination
 }
 
 export async function copyTree(source: string, destination: string, mode: RcloneConfigMode): Promise<void> {
-	await runRclone("copy", source, destination, mode);
+	await runRclone("copy", [source, destination], mode);
 }
 
 export async function copyFile(source: string, destinationFile: string, mode: RcloneConfigMode): Promise<void> {
-	await runRclone("copyto", source, destinationFile, mode);
+	await runRclone("copyto", [source, destinationFile], mode);
+}
+
+export async function statRemoteFile(path: string, mode: RcloneConfigMode): Promise<void> {
+	const output = await runRclone("lsjson", ["--stat", path], mode);
+	let item: unknown;
+	try {
+		item = JSON.parse(output);
+	} catch {
+		throw new BlotterError("rclone lsjson returned invalid JSON");
+	}
+	if (
+		typeof item !== "object" ||
+		item === null ||
+		Array.isArray(item) ||
+		(item as { IsDir?: unknown }).IsDir !== false
+	) {
+		throw new BlotterError(`rclone lsjson did not find a file at ${path}`);
+	}
 }
 
 export function joinRcloneDestination(destination: string, relativePath: string): string {
