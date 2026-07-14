@@ -5,6 +5,7 @@ import { DatabaseSync } from "node:sqlite";
 const CLAUDE_ID = "11111111-1111-4111-8111-111111111111";
 const CODEX_ID = "22222222-2222-4222-8222-222222222222";
 const PI_ID = "33333333-3333-4333-8333-333333333333";
+const GEMINI_ID = "44444444-4444-4444-8444-444444444444";
 const OPENCODE_ID = "ses_synthetic_opencode";
 const SYNTHETIC_ISO_TIMESTAMP = "2026-01-02T03:04:05.000Z";
 const SANITIZED_ISO_PATTERN = /^\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d{3}Z$/;
@@ -48,6 +49,27 @@ export interface PiStoreOptions extends FixtureFileOptions {
 	encodedCwd?: string;
 	/** Filename-safe ISO timestamp. */
 	timestamp?: string;
+}
+
+export interface GeminiSidecarOptions extends FixtureFileOptions {
+	/** Path below the project slug directory. */
+	relPath: string;
+}
+
+export interface GeminiStoreOptions extends FixtureFileOptions {
+	id?: string;
+	slug?: string;
+	projectRoot?: string;
+	/** Filename-safe minute timestamp. */
+	timestamp?: string;
+	/** Emit Gemini's legacy JSON record instead of its current JSONL record. */
+	legacy?: boolean;
+	/** Additional real Gemini artifacts that v1 deliberately does not archive. */
+	sidecars?: readonly GeminiSidecarOptions[];
+}
+
+export interface GeminiFixture extends FixtureUnit {
+	excludedFiles: FixtureFile[];
 }
 
 export interface OpenCodeStoreOptions {
@@ -249,6 +271,80 @@ export async function makePiStore(root: string, options: PiStoreOptions = {}): P
 		options.mtimeMs,
 	);
 	return { id, files: [{ absPath, relPath, role: "main" }] };
+}
+
+export async function makeGeminiStore(root: string, options: GeminiStoreOptions = {}): Promise<GeminiFixture> {
+	const id = options.id ?? GEMINI_ID;
+	const slug = options.slug ?? "synthetic-project";
+	const projectRoot = options.projectRoot ?? "/synthetic/project";
+	const timestamp = options.timestamp ?? "2026-01-02T03-04";
+	const extension = options.legacy === true ? "json" : "jsonl";
+	const mainRelPath = join(slug, "chats", `session-${timestamp}-${id.slice(0, 8)}.${extension}`);
+	const mainAbsPath = join(root, mainRelPath);
+	const metadata = {
+		sessionId: id,
+		projectHash: slug,
+		startTime: SYNTHETIC_ISO_TIMESTAMP,
+		lastUpdated: "2026-01-02T03:04:06.000Z",
+		kind: "main",
+	};
+	if (options.legacy === true) {
+		await mkdir(dirname(mainAbsPath), { recursive: true });
+		await writeFile(
+			mainAbsPath,
+			`${JSON.stringify({
+				...metadata,
+				messages: [
+					{
+						id: "synthetic-user",
+						timestamp: SYNTHETIC_ISO_TIMESTAMP,
+						type: "user",
+						content: "Synthetic fixture prompt.",
+					},
+				],
+			})}\n`,
+		);
+		await setMtime(mainAbsPath, options.mtimeMs);
+	} else {
+		await writeJsonl(
+			mainAbsPath,
+			[
+				metadata,
+				{
+					id: "synthetic-user",
+					timestamp: SYNTHETIC_ISO_TIMESTAMP,
+					type: "user",
+					content: "Synthetic fixture prompt.",
+				},
+			],
+			options.mtimeMs,
+		);
+	}
+
+	const markerRelPath = join(slug, ".project_root");
+	const markerAbsPath = join(root, markerRelPath);
+	await mkdir(dirname(markerAbsPath), { recursive: true });
+	await writeFile(markerAbsPath, `${projectRoot}\n`);
+	await setMtime(markerAbsPath, options.mtimeMs);
+
+	const excludedFiles: FixtureFile[] = [];
+	for (const sidecar of options.sidecars ?? []) {
+		const relPath = join(slug, sidecar.relPath);
+		const absPath = join(root, relPath);
+		await mkdir(dirname(absPath), { recursive: true });
+		await writeFile(absPath, `Synthetic Gemini sidecar at ${sidecar.relPath}.\n`);
+		await setMtime(absPath, sidecar.mtimeMs);
+		excludedFiles.push({ absPath, relPath, role: "sidecar" });
+	}
+
+	return {
+		id,
+		files: [
+			{ absPath: mainAbsPath, relPath: mainRelPath, role: "main" },
+			{ absPath: markerAbsPath, relPath: markerRelPath, role: "sidecar" },
+		],
+		excludedFiles,
+	};
 }
 
 export async function makeOpenCodeStore(

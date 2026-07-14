@@ -2,7 +2,14 @@ import { createHash } from "node:crypto";
 import { appendFile, chmod, mkdir, readFile, rm, utimes, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, describe, expect, test } from "vitest";
-import { appendJsonLine, makeClaudeStore, makeCodexStore, makeOpenCodeStore, makePiStore } from "./helpers/fixtures.js";
+import {
+	appendJsonLine,
+	makeClaudeStore,
+	makeCodexStore,
+	makeGeminiStore,
+	makeOpenCodeStore,
+	makePiStore,
+} from "./helpers/fixtures.js";
 import { makeTempHome, runCli } from "./helpers/run-cli.js";
 
 const homes: string[] = [];
@@ -69,6 +76,9 @@ describe("blotter doctor", () => {
 		});
 		expect(report.facts[4]?.detail).toContain(
 			"opencode: OpenCode does not automatically prune session history; explicit deletion removes it from the shared SQLite database",
+		);
+		expect(report.facts[4]?.detail).toContain(
+			"gemini: Gemini CLI deletes sessions older than general.sessionRetention.maxAge (30 days by default) at startup, including their associated artifacts",
 		);
 		expect(report.facts.find(({ id }) => id === "installed")).toMatchObject({
 			title: "installed",
@@ -404,10 +414,18 @@ describe("blotter doctor", () => {
 		}
 	});
 
-	test("keeps unsupported store detection for the remaining adapters", async () => {
+	test("surfaces Gemini as a supported readable and reconciled session store", async () => {
 		const layout = await initializedHome();
 		const geminiPath = join(layout.home, ".gemini", "tmp");
-		await mkdir(geminiPath, { recursive: true });
+		await makeGeminiStore(geminiPath);
+		expect(
+			(
+				await runCli(["sync"], {
+					home: layout.home,
+					env: { BLOTTER_HOME: layout.blotterHome },
+				})
+			).code,
+		).toBe(0);
 
 		const result = await runCli(["doctor", "--json"], {
 			home: layout.home,
@@ -415,9 +433,37 @@ describe("blotter doctor", () => {
 		});
 
 		const report = JSON.parse(result.stdout) as DoctorJson;
-		expect(report.facts.find(({ id }) => id === "unsupported-gemini")).toMatchObject({
+		expect(report.facts.find(({ id }) => id === "unsupported-gemini")).toBeUndefined();
+		expect(report.facts.find(({ id }) => id === "stores-readable")?.data).toMatchObject({
+			present: expect.arrayContaining([geminiPath]),
+		});
+		const reconciled = report.facts.find(({ id }) => id === "reconciled");
+		if (reconciled === undefined) {
+			throw new Error("doctor did not return a reconciled fact");
+		}
+		expect(reconciled?.status, JSON.stringify(reconciled, null, 2)).toBe("ok");
+		expect((reconciled.data as ReconciledData).harnesses.gemini).toMatchObject({
+			missing: 0,
+			stale: 0,
+			pending: 0,
+			orphaned: 0,
+		});
+	});
+
+	test("keeps unsupported store detection for Cursor", async () => {
+		const layout = await initializedHome();
+		const cursorPath = join(layout.home, ".cursor");
+		await mkdir(cursorPath, { recursive: true });
+
+		const result = await runCli(["doctor", "--json"], {
+			home: layout.home,
+			env: { BLOTTER_HOME: layout.blotterHome },
+		});
+
+		const report = JSON.parse(result.stdout) as DoctorJson;
+		expect(report.facts.find(({ id }) => id === "unsupported-cursor")).toMatchObject({
 			status: "info",
-			detail: `found gemini at ${geminiPath} — not yet supported`,
+			detail: `found cursor at ${cursorPath} — not yet supported`,
 		});
 	});
 

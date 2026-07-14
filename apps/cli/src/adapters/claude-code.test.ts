@@ -124,27 +124,23 @@ describe("claudeCodeAdapter", () => {
 
 describe("adapter registry", () => {
 	test("lists every supported adapter and resolves known ids", () => {
-		expect(adapters.map((adapter) => adapter.id)).toEqual(["claude-code", "codex", "pi", "opencode"]);
+		expect(adapters.map((adapter) => adapter.id)).toEqual(["claude-code", "codex", "pi", "opencode", "gemini"]);
 		expect(getAdapter("codex")?.id).toBe("codex");
+		expect(getAdapter("gemini")?.id).toBe("gemini");
 		expect(getAdapter("unknown")).toBeUndefined();
 	});
 
 	test("detects unsupported stores only when their configured paths exist", async () => {
 		const home = await makeRoot();
-		const geminiRoot = join(home, ".gemini", "tmp");
 		const cursorRoot = join(home, ".cursor");
 		const byId = new Map(unsupportedStores.map((store) => [store.id, store]));
 
-		expect(byId.get("gemini")?.detect({}, home)).toBeNull();
 		expect(byId.get("cursor")?.detect({}, home)).toBeNull();
 
-		await mkdir(geminiRoot, { recursive: true });
 		await mkdir(cursorRoot, { recursive: true });
 
-		expect(byId.get("gemini")?.detect({}, home)).toBe(geminiRoot);
 		expect(byId.get("cursor")?.detect({}, home)).toBe(cursorRoot);
 		expect(unsupportedStores.map(({ id, mutationModel }) => ({ id, mutationModel }))).toEqual([
-			{ id: "gemini", mutationModel: "append-file" },
 			{ id: "cursor", mutationModel: "undisclosed" },
 		]);
 	});

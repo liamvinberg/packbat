@@ -3,7 +3,13 @@ import { hostname } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, test } from "vitest";
-import { makeClaudeStore, makeCodexStore, makeOpenCodeStore, makePiStore } from "./helpers/fixtures.js";
+import {
+	makeClaudeStore,
+	makeCodexStore,
+	makeGeminiStore,
+	makeOpenCodeStore,
+	makePiStore,
+} from "./helpers/fixtures.js";
 import { makeTempHome, runCli } from "./helpers/run-cli.js";
 
 const homes: string[] = [];
@@ -21,17 +27,21 @@ describe("blotter init", () => {
 		const claudeConfigDir = join(home, "stores", "claude");
 		const claudeRoot = join(claudeConfigDir, "projects");
 		const codexRoot = join(home, "stores", "codex");
+		const geminiHome = join(home, "stores", "gemini");
+		const geminiRoot = join(geminiHome, ".gemini", "tmp");
 		const piRoot = join(home, "stores", "pi");
 		const opencodeDb = join(home, "stores", "opencode", "opencode.db");
 		const env = {
 			BLOTTER_HOME: blotterHome,
 			CLAUDE_CONFIG_DIR: claudeConfigDir,
 			CODEX_HOME: codexRoot,
+			GEMINI_CLI_HOME: geminiHome,
 			OPENCODE_DB: opencodeDb,
 			PI_CODING_AGENT_SESSION_DIR: piRoot,
 		};
 		const claude = await makeClaudeStore(claudeRoot);
 		const codex = await makeCodexStore(codexRoot);
+		const gemini = await makeGeminiStore(geminiRoot);
 		const pi = await makePiStore(piRoot);
 		const openCode = await makeOpenCodeStore(opencodeDb);
 		await mkdir(join(home, ".cursor"), { recursive: true });
@@ -44,10 +54,10 @@ describe("blotter init", () => {
 
 		expect(result.code).toBe(0);
 		expect(result.stderr).toBe("");
-		expect(result.stdout).toContain("detected: Claude Code, Codex, pi, OpenCode");
+		expect(result.stdout).toContain("detected: Claude Code, Codex, pi, OpenCode, Gemini CLI");
 		expect(result.stdout).toContain(`found, not yet supported: Cursor CLI (${join(home, ".cursor")})`);
 		expect(result.stdout).toContain(`archive: ${archiveRoot}`);
-		expect(result.stdout).toContain("archived 6, unchanged 0, failed 0");
+		expect(result.stdout).toContain("archived 8, unchanged 0, failed 0");
 		expect(result.stdout).toContain("installed: launchd schedule matches");
 		expect(result.stdout).toMatch(/live: (?:launchd job is not loaded|launchd job is loaded from .+; expected .+)/);
 		expect(result.stdout).toContain("problems:");
@@ -83,6 +93,8 @@ describe("blotter init", () => {
 		<string>${claudeConfigDir}</string>
 		<key>CODEX_HOME</key>
 		<string>${codexRoot}</string>
+		<key>GEMINI_CLI_HOME</key>
+		<string>${geminiHome}</string>
 		<key>OPENCODE_DB</key>
 		<string>${opencodeDb}</string>
 		<key>PI_CODING_AGENT_SESSION_DIR</key>
@@ -109,6 +121,7 @@ describe("blotter init", () => {
 		for (const [harness, fixture] of [
 			["claude-code", claude],
 			["codex", codex],
+			["gemini", gemini],
 			["pi", pi],
 		] as const) {
 			for (const file of fixture.files) {
@@ -119,7 +132,7 @@ describe("blotter init", () => {
 		expect(await stat(opencodeSnapshots)).toBeDefined();
 		expect(JSON.parse(await readFile(join(blotterHome, "state", "last-success.json"), "utf8"))).toMatchObject({
 			ok: true,
-			archived: 6,
+			archived: 8,
 			unchanged: 0,
 			failed: 0,
 		});

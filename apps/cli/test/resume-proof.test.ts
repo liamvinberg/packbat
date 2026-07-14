@@ -2,7 +2,7 @@ import { spawn } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import { chmod, copyFile, mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
-import { basename, dirname, join } from "node:path";
+import { basename, dirname, join, relative } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { zstdDecompressSync } from "node:zlib";
 import { afterEach, describe, expect, test } from "vitest";
@@ -24,6 +24,7 @@ interface ProofLayout {
 	codexHome: string;
 	piConfigDir: string;
 	piSessionDir: string;
+	geminiHome: string;
 	opencodeDb: string;
 	opencodeDataHome: string;
 	blotterEnv: Record<string, string>;
@@ -172,6 +173,7 @@ async function makeLayout(): Promise<ProofLayout> {
 	const codexHome = join(home, "codex");
 	const piConfigDir = join(home, "pi-config");
 	const piSessionDir = join(home, "pi-sessions");
+	const geminiHome = join(home, "gemini-home");
 	const opencodeDb = join(home, "opencode-proof.db");
 	const opencodeDataHome = join(home, "xdg-data");
 	await Promise.all([mkdir(project, { recursive: true }), mkdir(blotterHome, { recursive: true })]);
@@ -194,12 +196,14 @@ async function makeLayout(): Promise<ProofLayout> {
 		codexHome,
 		piConfigDir,
 		piSessionDir,
+		geminiHome,
 		opencodeDb,
 		opencodeDataHome,
 		blotterEnv: {
 			BLOTTER_HOME: blotterHome,
 			CLAUDE_CONFIG_DIR: claudeConfigDir,
 			CODEX_HOME: codexHome,
+			GEMINI_CLI_HOME: geminiHome,
 			PI_CODING_AGENT_SESSION_DIR: piSessionDir,
 			OPENCODE_DB: opencodeDb,
 			XDG_DATA_HOME: opencodeDataHome,
@@ -275,10 +279,10 @@ async function sync(layout: ProofLayout): Promise<void> {
 	expect(result.code, result.stderr).toBe(0);
 }
 
-async function restore(layout: ProofLayout, id: string): Promise<void> {
+async function restore(layout: ProofLayout, id: string, expectedFiles = 1): Promise<void> {
 	const result = await runCli(["restore", id], { home: layout.home, env: layout.blotterEnv });
 	expect(result.code, result.stderr).toBe(0);
-	expect(result.stdout).toContain(`restored 1 file`);
+	expect(result.stdout).toContain(`restored ${expectedFiles} file`);
 }
 
 async function downgradePiSessionToV1(path: string): Promise<Buffer> {
@@ -301,6 +305,13 @@ afterEach(async () => {
 });
 
 describe.runIf(process.env.BLOTTER_RESUME_PROOF === "1")("resume proof", () => {
+	const installedGemini = commandOnPath("gemini", process.env);
+	const geminiApiKey = process.env.GEMINI_API_KEY;
+	const canRunGemini =
+		process.env.BLOTTER_RESUME_PROOF === "1" &&
+		installedGemini !== null &&
+		geminiApiKey !== undefined &&
+		geminiApiKey !== "";
 	const installedOpenCode = commandOnPath("opencode", process.env);
 	const openCodeAuthSource = process.env.HOME
 		? join(process.env.HOME, ".local", "share", "opencode", "auth.json")
@@ -533,6 +544,88 @@ describe.runIf(process.env.BLOTTER_RESUME_PROOF === "1")("resume proof", () => {
 			});
 			expect(forkEntries.length).toBeGreaterThan(migratedEntries.length);
 			expect(await readFile(archivedPath!)).toEqual(archivedBytes);
+		},
+		TEST_TIMEOUT_MS,
+	);
+
+	test.skipIf(!canRunGemini)(
+		"Gemini CLI: a restored JSONL resumes by full UUID, appends in place, and leaves its archive unchanged",
+		async () => {
+			const layout = await makeLayout();
+			const codename = `larkspur-gemini-${randomUUID()}`;
+			const geminiRoot = join(layout.geminiHome, ".gemini", "tmp");
+			const env = isolatedEnv(layout.home, {
+				GEMINI_API_KEY: geminiApiKey!,
+				GEMINI_CLI_HOME: layout.geminiHome,
+			});
+			const created = await runCommand(
+				installedGemini!,
+				[
+					"-p",
+					`For this disposable continuity test, the fictional project codename is ${codename}. Remember it and acknowledge briefly.`,
+					"--output-format",
+					"json",
+				],
+				{ cwd: layout.project, env },
+			);
+			expectSuccess(created);
+			const sessionFiles = await findFiles(
+				geminiRoot,
+				(path) => basename(path).startsWith("session-") && path.endsWith(".jsonl"),
+			);
+			expect(sessionFiles, `expected one Gemini JSONL below ${geminiRoot}`).toHaveLength(1);
+			const originalPath = sessionFiles[0]!;
+			const originalBytes = await readFile(originalPath);
+			const firstLine = originalBytes.toString("utf8").split("\n", 1)[0];
+			if (firstLine === undefined) {
+				throw new Error(`Gemini session file has no metadata line: ${originalPath}`);
+			}
+			const metadata = JSON.parse(firstLine) as unknown;
+			if (!isRecord(metadata) || typeof metadata.sessionId !== "string") {
+				throw new Error(`Gemini session metadata has no full sessionId: ${originalPath}`);
+			}
+			const id = metadata.sessionId;
+			expect(basename(originalPath)).toContain(id.slice(0, 8));
+			expect(basename(originalPath)).not.toContain(id);
+
+			await sync(layout);
+			const relPath = relative(geminiRoot, originalPath);
+			const archivedPath = join(layout.archiveRoot, MACHINE, "gemini", `${relPath}.zst`);
+			const archivedBytes = await readFile(archivedPath);
+			await rm(geminiRoot, { recursive: true, force: true });
+			await restore(layout, id, 2);
+			const restoredPath = join(geminiRoot, relPath);
+			expect(await readFile(restoredPath)).toEqual(originalBytes);
+
+			const listed = await runCommand(installedGemini!, ["--list-sessions"], { cwd: layout.project, env });
+			expectSuccess(listed);
+			expect(listed.stdout).toContain(id.slice(0, 8));
+
+			const resumed = await runCommand(
+				installedGemini!,
+				[
+					"--resume",
+					id,
+					"-p",
+					"Reply only with the fictional project codename from the prior turn.",
+					"--output-format",
+					"json",
+				],
+				{ cwd: layout.project, env },
+			);
+			expectSuccess(resumed);
+			expect(resumed.stdout).toContain(codename);
+			const grownBytes = await readFile(restoredPath);
+			expect(grownBytes.byteLength).toBeGreaterThan(originalBytes.byteLength);
+			expect(grownBytes.subarray(0, originalBytes.byteLength)).toEqual(originalBytes);
+			const appendedRecords = grownBytes
+				.subarray(originalBytes.byteLength)
+				.toString("utf8")
+				.split("\n")
+				.filter((line) => line.trim() !== "")
+				.map((line) => JSON.parse(line) as unknown);
+			expect(appendedRecords.length).toBeGreaterThan(0);
+			expect(await readFile(archivedPath)).toEqual(archivedBytes);
 		},
 		TEST_TIMEOUT_MS,
 	);

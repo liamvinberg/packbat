@@ -1,7 +1,13 @@
 import { rm } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, describe, expect, test } from "vitest";
-import { makeClaudeStore, makeCodexStore, makeOpenCodeStore, makePiStore } from "./helpers/fixtures.js";
+import {
+	makeClaudeStore,
+	makeCodexStore,
+	makeGeminiStore,
+	makeOpenCodeStore,
+	makePiStore,
+} from "./helpers/fixtures.js";
 import { makeTempHome, runCli } from "./helpers/run-cli.js";
 
 const homes: string[] = [];
@@ -36,11 +42,13 @@ async function sweptLayout(): Promise<{
 		BLOTTER_HOME: blotterHome,
 		CLAUDE_CONFIG_DIR: claudeConfigDir,
 		CODEX_HOME: join(home, "stores", "codex"),
+		GEMINI_CLI_HOME: join(home, "stores", "gemini"),
 		OPENCODE_DB: join(home, "stores", "opencode", "opencode.db"),
 		PI_CODING_AGENT_SESSION_DIR: join(home, "stores", "pi"),
 	};
 	await makeClaudeStore(join(claudeConfigDir, "projects"));
 	await makeCodexStore(env.CODEX_HOME);
+	await makeGeminiStore(join(env.GEMINI_CLI_HOME, ".gemini", "tmp"));
 	await makePiStore(env.PI_CODING_AGENT_SESSION_DIR);
 	const openCode = await makeOpenCodeStore(env.OPENCODE_DB);
 	const initialized = await runCli(
@@ -65,12 +73,13 @@ describe("blotter status", () => {
 		expect(result.stdout).toContain("schedule:");
 		expect(result.stdout).toContain("live state not checked");
 		expect(result.stdout).toContain("last run:");
-		expect(result.stdout).toContain("archived 6, unchanged 0, failed 0");
+		expect(result.stdout).toContain("archived 8, unchanged 0, failed 0");
 		expect(result.stdout).toContain("last success:");
 		expect(result.stdout).toMatch(/claude-code: 1 unit · 3 files · \d+(?:\.\d+)? (?:B|KiB)/);
 		expect(result.stdout).toMatch(/codex: 1 unit · 1 file · \d+(?:\.\d+)? (?:B|KiB)/);
 		expect(result.stdout).toMatch(/pi: 1 unit · 1 file · \d+(?:\.\d+)? (?:B|KiB)/);
 		expect(result.stdout).toMatch(/opencode: 1 unit · 1 file · \d+(?:\.\d+)? (?:B|KiB)/);
+		expect(result.stdout).toMatch(/gemini: 1 unit · 2 files · \d+(?:\.\d+)? (?:B|KiB)/);
 		expect(result.stdout).toContain("offbox: off-box skipped on");
 	});
 
@@ -89,7 +98,7 @@ describe("blotter status", () => {
 			v: 2,
 			archiveRoot: layout.archiveRoot,
 			schedule: { installed: true, live: "not-checked", liveDetail: expect.stringContaining("doctor") },
-			lastRun: { ok: true, archived: 6, unchanged: 0, failed: 0 },
+			lastRun: { ok: true, archived: 8, unchanged: 0, failed: 0 },
 			lastSuccess: { ok: true },
 			offbox: [{ status: "info", detail: expect.stringContaining("skipped") }],
 		});
@@ -98,6 +107,7 @@ describe("blotter status", () => {
 			{ harness: "codex", units: 1, files: 1, storedBytes: expect.any(Number) },
 			{ harness: "pi", units: 1, files: 1, storedBytes: expect.any(Number) },
 			{ harness: "opencode", units: 1, files: 1, storedBytes: expect.any(Number) },
+			{ harness: "gemini", units: 1, files: 2, storedBytes: expect.any(Number) },
 		]);
 		for (const tally of report.harnesses) {
 			expect(tally.storedBytes).toBeGreaterThan(0);

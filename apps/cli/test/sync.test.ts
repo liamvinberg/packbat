@@ -9,6 +9,7 @@ import {
 	type FixtureFile,
 	makeClaudeStore,
 	makeCodexStore,
+	makeGeminiStore,
 	makeOpenCodeStore,
 	makePiStore,
 } from "./helpers/fixtures.js";
@@ -24,6 +25,7 @@ interface TestLayout {
 	archiveRoot: string;
 	claudeRoot: string;
 	codexRoot: string;
+	geminiRoot: string;
 	piRoot: string;
 	opencodeDb: string;
 	env: Record<string, string>;
@@ -36,6 +38,8 @@ async function makeLayout(): Promise<TestLayout> {
 	const archiveRoot = join(home, "archive");
 	const claudeConfigDir = join(home, "stores", "claude");
 	const codexRoot = join(home, "stores", "codex");
+	const geminiHome = join(home, "stores", "gemini");
+	const geminiRoot = join(geminiHome, ".gemini", "tmp");
 	const piRoot = join(home, "stores", "pi");
 	const opencodeDb = join(home, "stores", "opencode", "opencode.db");
 	return {
@@ -44,12 +48,14 @@ async function makeLayout(): Promise<TestLayout> {
 		archiveRoot,
 		claudeRoot: join(claudeConfigDir, "projects"),
 		codexRoot,
+		geminiRoot,
 		piRoot,
 		opencodeDb,
 		env: {
 			BLOTTER_HOME: blotterHome,
 			CLAUDE_CONFIG_DIR: claudeConfigDir,
 			CODEX_HOME: codexRoot,
+			GEMINI_CLI_HOME: geminiHome,
 			OPENCODE_DB: opencodeDb,
 			PI_CODING_AGENT_SESSION_DIR: piRoot,
 		},
@@ -111,10 +117,12 @@ describe("blotter sync", () => {
 		const fractionalMtimeSeconds = (SOURCE_MTIME_MS + 0.456) / 1000;
 		await utimes(codex.files[0]!.absPath, fractionalMtimeSeconds, fractionalMtimeSeconds);
 		const pi = await makePiStore(layout.piRoot, { mtimeMs: SOURCE_MTIME_MS });
+		const gemini = await makeGeminiStore(layout.geminiRoot, { mtimeMs: SOURCE_MTIME_MS });
 		const expected = [
 			...claude.files.map((file) => ({ harness: "claude-code", file })),
 			...codex.files.map((file) => ({ harness: "codex", file })),
 			...pi.files.map((file) => ({ harness: "pi", file })),
+			...gemini.files.map((file) => ({ harness: "gemini", file })),
 		];
 
 		const first = await runCli(["sync"], { home: layout.home, env: layout.env });

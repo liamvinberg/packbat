@@ -154,6 +154,38 @@ function toArchivedSnapshotUnit(
 	};
 }
 
+function attachGeminiProjectMarkers(
+	groups: Map<string, { harness: HarnessId; id: string; records: ArchiveIndexRecord[] }>,
+): void {
+	const markers = new Map<string, ArchiveIndexRecord>();
+	for (const group of groups.values()) {
+		if (group.harness !== "gemini") {
+			continue;
+		}
+		for (const record of group.records) {
+			const parts = recordRelPath(record).split(sep);
+			if (parts.length === 2 && parts[1] === ".project_root") {
+				markers.set(parts[0]!, record);
+			}
+		}
+	}
+	for (const group of groups.values()) {
+		if (group.harness !== "gemini") {
+			continue;
+		}
+		const main = group.records.find((record) => record.role === "main");
+		if (main === undefined) {
+			continue;
+		}
+		const parts = recordRelPath(main).split(sep);
+		const marker = parts[1] === "chats" ? markers.get(parts[0]!) : undefined;
+		if (marker !== undefined && !group.records.some((record) => record.path === marker.path)) {
+			// One physical project locator is shared by every session in the slug.
+			group.records.push(marker);
+		}
+	}
+}
+
 export async function readArchivedUnits(config: BlotterConfig, machine: string): Promise<ArchivedUnit[]> {
 	let records: ArchiveIndexRecord[];
 	try {
@@ -173,6 +205,7 @@ export async function readArchivedUnits(config: BlotterConfig, machine: string):
 			group.records.push(record);
 		}
 	}
+	attachGeminiProjectMarkers(groups);
 	const newestSnapshots = new Map<string, { id: string; record: DatabaseSnapshotIndexRecord }>();
 	for (const record of records.filter(isDatabaseSnapshotIndexRecord)) {
 		for (const session of record.sessions) {

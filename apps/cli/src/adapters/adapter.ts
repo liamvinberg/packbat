@@ -4,7 +4,7 @@
  * consumes either explicit session files or one store-wide database snapshot.
  */
 
-export const HARNESS_IDS = ["claude-code", "codex", "pi", "opencode"] as const;
+export const HARNESS_IDS = ["claude-code", "codex", "pi", "opencode", "gemini"] as const;
 
 export type HarnessId = (typeof HARNESS_IDS)[number];
 
@@ -76,8 +76,9 @@ export interface SessionHarnessAdapter extends HarnessAdapterBase {
 	mutationModel: Exclude<MutationModel, "db-snapshot">;
 	/**
 	 * Stat-walk the store into session units. Missing root resolves to [] —
-	 * an absent harness is success, not an error. Must never read file
-	 * contents (unit ids are filename-derived for all v1 harnesses).
+	 * an absent harness is success, not an error. Enumeration is content-blind
+	 * except for Gemini CLI, which reads only bounded first-line/legacy metadata
+	 * because its filenames contain only an eight-character session-id prefix.
 	 */
 	enumerate(storeRoot: string): Promise<SessionUnit[]>;
 	/** Where an archived relPath must land for this harness's resume lookup to find it. */
@@ -107,7 +108,7 @@ export type HarnessAdapter = SessionHarnessAdapter | DatabaseSnapshotHarnessAdap
  * "found, not yet supported" so coverage gaps are visible instead of silent.
  */
 export interface UnsupportedStore {
-	id: "gemini" | "cursor";
+	id: "cursor";
 	displayName: string;
 	/** The axis that gates support; Cursor does not disclose its persistence. */
 	mutationModel: MutationModel | "undisclosed";

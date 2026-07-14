@@ -8,6 +8,7 @@ import {
 	type FixtureUnit,
 	makeClaudeStore,
 	makeCodexStore,
+	makeGeminiStore,
 	makeOpenCodeStore,
 	makePiStore,
 } from "./helpers/fixtures.js";
@@ -23,6 +24,7 @@ interface TestLayout {
 	archiveRoot: string;
 	claudeRoot: string;
 	codexRoot: string;
+	geminiRoot: string;
 	piRoot: string;
 	opencodeDb: string;
 	env: Record<string, string>;
@@ -40,6 +42,8 @@ async function makeLayout(): Promise<TestLayout> {
 	const archiveRoot = join(home, "archive");
 	const claudeConfigDir = join(home, "stores", "claude");
 	const codexRoot = join(home, "stores", "codex");
+	const geminiHome = join(home, "stores", "gemini");
+	const geminiRoot = join(geminiHome, ".gemini", "tmp");
 	const piRoot = join(home, "stores", "pi");
 	const opencodeDb = join(home, "stores", "opencode", "opencode.db");
 	return {
@@ -48,12 +52,14 @@ async function makeLayout(): Promise<TestLayout> {
 		archiveRoot,
 		claudeRoot: join(claudeConfigDir, "projects"),
 		codexRoot,
+		geminiRoot,
 		piRoot,
 		opencodeDb,
 		env: {
 			BLOTTER_HOME: blotterHome,
 			CLAUDE_CONFIG_DIR: claudeConfigDir,
 			CODEX_HOME: codexRoot,
+			GEMINI_CLI_HOME: geminiHome,
 			OPENCODE_DB: opencodeDb,
 			PI_CODING_AGENT_SESSION_DIR: piRoot,
 		},
@@ -113,7 +119,8 @@ describe("blotter restore", () => {
 			],
 		});
 		const codex = await makeCodexStore(layout.codexRoot, { mtimeMs: SOURCE_MTIME_MS + 3_000 });
-		const pi = await makePiStore(layout.piRoot, { mtimeMs: SOURCE_MTIME_MS + 4_000 });
+		const gemini = await makeGeminiStore(layout.geminiRoot, { mtimeMs: SOURCE_MTIME_MS + 4_000 });
+		const pi = await makePiStore(layout.piRoot, { mtimeMs: SOURCE_MTIME_MS + 5_000 });
 		const fixtures: Array<{ fixture: FixtureUnit; root: string; hints: string[] }> = [
 			{
 				fixture: claude,
@@ -121,6 +128,11 @@ describe("blotter restore", () => {
 				hints: ["Run from the original project directory:", `claude --resume ${claude.id}`],
 			},
 			{ fixture: codex, root: layout.codexRoot, hints: [`codex resume ${codex.id}`] },
+			{
+				fixture: gemini,
+				root: layout.geminiRoot,
+				hints: ["Run from the original project directory:", `gemini --resume ${gemini.id}`],
+			},
 			{ fixture: pi, root: layout.piRoot, hints: [`pi --session ${pi.id}`] },
 		];
 		const snapshots = new Map(
@@ -140,12 +152,16 @@ describe("blotter restore", () => {
 			`${codex.id} · codex · ${MACHINE} · 1 file · ${new Date(SOURCE_MTIME_MS + 3_000).toISOString()}`,
 		);
 		expect(listed.stdout).toContain(
-			`${pi.id} · pi · ${MACHINE} · 1 file · ${new Date(SOURCE_MTIME_MS + 4_000).toISOString()}`,
+			`${gemini.id} · gemini · ${MACHINE} · 2 files · ${new Date(SOURCE_MTIME_MS + 4_000).toISOString()}`,
+		);
+		expect(listed.stdout).toContain(
+			`${pi.id} · pi · ${MACHINE} · 1 file · ${new Date(SOURCE_MTIME_MS + 5_000).toISOString()}`,
 		);
 
 		await Promise.all([
 			rm(layout.claudeRoot, { recursive: true, force: true }),
 			rm(layout.codexRoot, { recursive: true, force: true }),
+			rm(layout.geminiRoot, { recursive: true, force: true }),
 			rm(layout.piRoot, { recursive: true, force: true }),
 		]);
 		for (const { fixture, root, hints } of fixtures) {
@@ -159,6 +175,32 @@ describe("blotter restore", () => {
 			);
 			await expectRestored(root, snapshots.get(fixture.id)!);
 		}
+	});
+
+	test("restores the shared Gemini project marker with every session from that project", async () => {
+		const layout = await makeLayout();
+		await writeConfig(layout);
+		await makeGeminiStore(layout.geminiRoot, {
+			id: "44444444-4444-4444-8444-444444444444",
+			slug: "shared-project",
+			timestamp: "2026-01-02T03-04",
+			mtimeMs: SOURCE_MTIME_MS,
+		});
+		const second = await makeGeminiStore(layout.geminiRoot, {
+			id: "55555555-5555-4555-8555-555555555555",
+			slug: "shared-project",
+			timestamp: "2026-01-02T04-05",
+			mtimeMs: SOURCE_MTIME_MS + 1_000,
+		});
+		const secondSnapshot = await snapshotFiles(second.files);
+
+		expect((await runCli(["sync"], { home: layout.home, env: layout.env })).code).toBe(0);
+		await rm(layout.geminiRoot, { recursive: true, force: true });
+		const restored = await runCli(["restore", second.id], { home: layout.home, env: layout.env });
+
+		expect(restored.code, restored.stderr).toBe(0);
+		expect(restored.stdout).toContain(`restored 2 files to ${layout.geminiRoot}`);
+		await expectRestored(layout.geminiRoot, secondSnapshot);
 	});
 
 	test("refuses every write when any live unit file is newer, then force restores the whole unit", async () => {
