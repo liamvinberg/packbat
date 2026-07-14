@@ -403,7 +403,7 @@ describe.runIf(process.env.BLOTTER_RESUME_PROOF === "1")("resume proof", () => {
 	);
 
 	test(
-		"pi: a restored v1 session migrates only in the live store and resumes without losing prior context",
+		"pi: a restored v1 session migrates live, resumes, and forks without losing prior context",
 		async () => {
 			const layout = await makeLayout();
 			const id = randomUUID();
@@ -475,6 +475,32 @@ describe.runIf(process.env.BLOTTER_RESUME_PROOF === "1")("resume proof", () => {
 				expect(typeof entry.id).toBe("string");
 				expect(entry.parentId === null || typeof entry.parentId === "string").toBe(true);
 			}
+
+			const forkId = randomUUID();
+			const forked = await runCommand(
+				"pi",
+				[
+					...commonArgs,
+					"--fork",
+					id,
+					"--session-id",
+					forkId,
+					"What fictional project codename was provided before this session was forked? Reply with only the codename.",
+				],
+				{ cwd: layout.project, env },
+			);
+			expectSuccess(forked);
+			expect(piAssistantText(forked.stdout)).toContain(codename);
+			const forkPath = await findSessionFile(layout.piSessionDir, forkId);
+			expect(forkPath).not.toBe(restoredPath);
+			const forkEntries = parseJsonLines(await readFile(forkPath, "utf8"));
+			expect(forkEntries[0]).toMatchObject({
+				type: "session",
+				version: 3,
+				id: forkId,
+				parentSession: restoredPath,
+			});
+			expect(forkEntries.length).toBeGreaterThan(migratedEntries.length);
 			expect(await readFile(archivedPath!)).toEqual(archivedBytes);
 		},
 		TEST_TIMEOUT_MS,
