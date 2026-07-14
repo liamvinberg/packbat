@@ -3,25 +3,16 @@ import { join } from "node:path";
 import type { HarnessAdapter, UnsupportedStore } from "./adapter.js";
 import { claudeCodeAdapter } from "./claude-code.js";
 import { codexAdapter } from "./codex.js";
+import { openCodeAdapter } from "./opencode.js";
 import { piAdapter } from "./pi.js";
 
-export const adapters: readonly HarnessAdapter[] = [claudeCodeAdapter, codexAdapter, piAdapter];
+export const adapters: readonly HarnessAdapter[] = [claudeCodeAdapter, codexAdapter, piAdapter, openCodeAdapter];
 
 function existingPath(path: string): string | null {
 	return existsSync(path) ? path : null;
 }
 
 export const unsupportedStores: readonly UnsupportedStore[] = [
-	{
-		id: "opencode",
-		displayName: "OpenCode",
-		mutationModel: "db-snapshot",
-		detect(env, home) {
-			const defaultDataHome = env.XDG_DATA_HOME ? env.XDG_DATA_HOME : join(home, ".local", "share");
-			const path = env.OPENCODE_DB ? env.OPENCODE_DB : join(defaultDataHome, "opencode", "opencode.db");
-			return existingPath(path);
-		},
-	},
 	{
 		id: "gemini",
 		displayName: "Gemini CLI",

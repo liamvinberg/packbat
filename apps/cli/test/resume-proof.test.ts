@@ -1,8 +1,12 @@
 import { spawn } from "node:child_process";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
+import { existsSync } from "node:fs";
 import { chmod, copyFile, mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
+import { zstdDecompressSync } from "node:zlib";
 import { afterEach, describe, expect, test } from "vitest";
+import { commandOnPath } from "../src/core/exec.js";
 import { makeTempHome, runCli } from "./helpers/run-cli.js";
 
 const MACHINE = "resume-proof-machine";
@@ -20,6 +24,8 @@ interface ProofLayout {
 	codexHome: string;
 	piConfigDir: string;
 	piSessionDir: string;
+	opencodeDb: string;
+	opencodeDataHome: string;
 	blotterEnv: Record<string, string>;
 }
 
@@ -119,6 +125,15 @@ function codexThreadId(output: string): string {
 	throw new Error(`Codex did not emit a thread.started event:\n${output}`);
 }
 
+function openCodeSessionId(output: string): string {
+	for (const event of parseJsonLines(output)) {
+		if (typeof event.sessionID === "string" && event.sessionID.startsWith("ses_")) {
+			return event.sessionID;
+		}
+	}
+	throw new Error(`OpenCode did not emit a sessionID event:\n${output}`);
+}
+
 function piAssistantText(output: string): string {
 	let assistantText: string | undefined;
 	for (const event of parseJsonLines(output)) {
@@ -157,6 +172,8 @@ async function makeLayout(): Promise<ProofLayout> {
 	const codexHome = join(home, "codex");
 	const piConfigDir = join(home, "pi-config");
 	const piSessionDir = join(home, "pi-sessions");
+	const opencodeDb = join(home, "opencode-proof.db");
+	const opencodeDataHome = join(home, "xdg-data");
 	await Promise.all([mkdir(project, { recursive: true }), mkdir(blotterHome, { recursive: true })]);
 	await writeFile(
 		join(blotterHome, "config.json"),
@@ -177,11 +194,15 @@ async function makeLayout(): Promise<ProofLayout> {
 		codexHome,
 		piConfigDir,
 		piSessionDir,
+		opencodeDb,
+		opencodeDataHome,
 		blotterEnv: {
 			BLOTTER_HOME: blotterHome,
 			CLAUDE_CONFIG_DIR: claudeConfigDir,
 			CODEX_HOME: codexHome,
 			PI_CODING_AGENT_SESSION_DIR: piSessionDir,
+			OPENCODE_DB: opencodeDb,
+			XDG_DATA_HOME: opencodeDataHome,
 		},
 	};
 }
@@ -280,6 +301,16 @@ afterEach(async () => {
 });
 
 describe.runIf(process.env.BLOTTER_RESUME_PROOF === "1")("resume proof", () => {
+	const installedOpenCode = commandOnPath("opencode", process.env);
+	const openCodeAuthSource = process.env.HOME
+		? join(process.env.HOME, ".local", "share", "opencode", "auth.json")
+		: null;
+	const canRunOpenCode =
+		process.env.BLOTTER_RESUME_PROOF === "1" &&
+		installedOpenCode !== null &&
+		openCodeAuthSource !== null &&
+		existsSync(openCodeAuthSource);
+
 	test(
 		"Claude Code: a restored session is discovered from its encoded cwd and resumes with its prior context",
 		async () => {
@@ -501,6 +532,85 @@ describe.runIf(process.env.BLOTTER_RESUME_PROOF === "1")("resume proof", () => {
 				parentSession: restoredPath,
 			});
 			expect(forkEntries.length).toBeGreaterThan(migratedEntries.length);
+			expect(await readFile(archivedPath!)).toEqual(archivedBytes);
+		},
+		TEST_TIMEOUT_MS,
+	);
+
+	test.skipIf(!canRunOpenCode)(
+		"OpenCode: a whole-database snapshot restores and resumes the exact session without mutating the archive",
+		async () => {
+			const layout = await makeLayout();
+			const codename = `larkspur-opencode-${randomUUID()}`;
+			const authTarget = join(layout.opencodeDataHome, "opencode", "auth.json");
+			await copyCredential(openCodeAuthSource!, authTarget);
+			const env = isolatedEnv(layout.home, {
+				OPENCODE_DB: layout.opencodeDb,
+				XDG_DATA_HOME: layout.opencodeDataHome,
+			});
+			const created = await runCommand(
+				installedOpenCode!,
+				[
+					"run",
+					"--pure",
+					"--format",
+					"json",
+					"--dangerously-skip-permissions",
+					`For this disposable continuity test, the fictional project codename is ${codename}. Acknowledge it briefly.`,
+				],
+				{ cwd: layout.project, env },
+			);
+			expectSuccess(created);
+			const id = openCodeSessionId(created.stdout);
+			const source = new DatabaseSync(layout.opencodeDb);
+			try {
+				expect(source.prepare("PRAGMA journal_mode").get()).toEqual({ journal_mode: "wal" });
+				await sync(layout);
+			} finally {
+				source.close();
+			}
+			const archivedPath = (
+				await findFiles(join(layout.archiveRoot, MACHINE, "opencode", "snapshots"), (path) =>
+					path.endsWith("opencode.db.zst"),
+				)
+			)[0];
+			expect(archivedPath).toBeDefined();
+			const archivedBytes = await readFile(archivedPath!);
+			const completedBackup = zstdDecompressSync(archivedBytes);
+			const completedHash = createHash("sha256").update(completedBackup).digest("hex");
+			const manifest = JSON.parse(await readFile(join(dirname(archivedPath!), "manifest.json"), "utf8")) as {
+				contentSha256: string;
+			};
+			expect(manifest.contentSha256).toBe(completedHash);
+
+			await Promise.all([
+				rm(layout.opencodeDb, { force: true }),
+				rm(`${layout.opencodeDb}-wal`, { force: true }),
+				rm(`${layout.opencodeDb}-shm`, { force: true }),
+			]);
+			await restore(layout, id);
+			expect(await readFile(layout.opencodeDb)).toEqual(completedBackup);
+
+			const resumed = await runCommand(
+				installedOpenCode!,
+				[
+					"run",
+					"--pure",
+					"--format",
+					"json",
+					"--dangerously-skip-permissions",
+					"--session",
+					id,
+					"What fictional project codename was provided? Reply with only the codename.",
+				],
+				{ cwd: layout.project, env },
+			);
+			expectSuccess(resumed);
+			expect(openCodeSessionId(resumed.stdout)).toBe(id);
+			expect(resumed.stdout).toContain(codename);
+
+			const exported = await runCommand(installedOpenCode!, ["export", id], { cwd: layout.project, env });
+			expectSuccess(exported);
 			expect(await readFile(archivedPath!)).toEqual(archivedBytes);
 		},
 		TEST_TIMEOUT_MS,

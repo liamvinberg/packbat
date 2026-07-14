@@ -3,7 +3,7 @@ import { hostname } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, test } from "vitest";
-import { makeClaudeStore, makeCodexStore, makePiStore } from "./helpers/fixtures.js";
+import { makeClaudeStore, makeCodexStore, makeOpenCodeStore, makePiStore } from "./helpers/fixtures.js";
 import { makeTempHome, runCli } from "./helpers/run-cli.js";
 
 const homes: string[] = [];
@@ -22,28 +22,32 @@ describe("blotter init", () => {
 		const claudeRoot = join(claudeConfigDir, "projects");
 		const codexRoot = join(home, "stores", "codex");
 		const piRoot = join(home, "stores", "pi");
+		const opencodeDb = join(home, "stores", "opencode", "opencode.db");
 		const env = {
 			BLOTTER_HOME: blotterHome,
 			CLAUDE_CONFIG_DIR: claudeConfigDir,
 			CODEX_HOME: codexRoot,
+			OPENCODE_DB: opencodeDb,
 			PI_CODING_AGENT_SESSION_DIR: piRoot,
 		};
 		const claude = await makeClaudeStore(claudeRoot);
 		const codex = await makeCodexStore(codexRoot);
 		const pi = await makePiStore(piRoot);
+		const openCode = await makeOpenCodeStore(opencodeDb);
 		await mkdir(join(home, ".cursor"), { recursive: true });
 
 		const result = await runCli(["init", "--yes", "--archive-root", archiveRoot, "--offbox", "skip", "--no-activate"], {
 			home,
 			env,
 		});
+		openCode.database.close();
 
 		expect(result.code).toBe(0);
 		expect(result.stderr).toBe("");
-		expect(result.stdout).toContain("detected: Claude Code, Codex, pi");
+		expect(result.stdout).toContain("detected: Claude Code, Codex, pi, OpenCode");
 		expect(result.stdout).toContain(`found, not yet supported: Cursor CLI (${join(home, ".cursor")})`);
 		expect(result.stdout).toContain(`archive: ${archiveRoot}`);
-		expect(result.stdout).toContain("archived 5, unchanged 0, failed 0");
+		expect(result.stdout).toContain("archived 6, unchanged 0, failed 0");
 		expect(result.stdout).toContain("installed: launchd schedule matches");
 		expect(result.stdout).toMatch(/live: (?:launchd job is not loaded|launchd job is loaded from .+; expected .+)/);
 		expect(result.stdout).toContain("problems:");
@@ -79,6 +83,8 @@ describe("blotter init", () => {
 		<string>${claudeConfigDir}</string>
 		<key>CODEX_HOME</key>
 		<string>${codexRoot}</string>
+		<key>OPENCODE_DB</key>
+		<string>${opencodeDb}</string>
 		<key>PI_CODING_AGENT_SESSION_DIR</key>
 		<string>${piRoot}</string>
 	</dict>
@@ -109,9 +115,11 @@ describe("blotter init", () => {
 				expect(await stat(join(archiveRoot, machine, harness, `${file.relPath}.zst`))).toBeDefined();
 			}
 		}
+		const opencodeSnapshots = join(archiveRoot, machine, "opencode", "snapshots");
+		expect(await stat(opencodeSnapshots)).toBeDefined();
 		expect(JSON.parse(await readFile(join(blotterHome, "state", "last-success.json"), "utf8"))).toMatchObject({
 			ok: true,
-			archived: 5,
+			archived: 6,
 			unchanged: 0,
 			failed: 0,
 		});

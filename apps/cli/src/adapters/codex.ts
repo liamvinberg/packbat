@@ -1,6 +1,6 @@
 import { join, relative, sep } from "node:path";
 import { readDirectoryOrEmpty, statOrNull } from "../core/fs.js";
-import { type HarnessAdapter, type SessionFile, type SessionUnit, UUID_SOURCE } from "./adapter.js";
+import { type SessionFile, type SessionHarnessAdapter, type SessionUnit, UUID_SOURCE } from "./adapter.js";
 
 const ROLLOUT_PATTERN = new RegExp(`^rollout-.+-(${UUID_SOURCE})\\.jsonl$`, "i");
 const YEAR_PATTERN = /^\d{4}$/;
@@ -63,7 +63,7 @@ async function walkRollouts(storeRoot: string, directory: string): Promise<Sessi
 	return units;
 }
 
-export const codexAdapter: HarnessAdapter = {
+export const codexAdapter: SessionHarnessAdapter = {
 	id: "codex",
 	displayName: "Codex",
 	mutationModel: "append-file",

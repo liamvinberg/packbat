@@ -3,10 +3,20 @@ import { createReadStream } from "node:fs";
 import { stat } from "node:fs/promises";
 import { join, relative, sep } from "node:path";
 import { type FileRole, type HarnessId, isHarnessId, UUID_SOURCE } from "../adapters/adapter.js";
+import { adapters } from "../adapters/registry.js";
 import type { BlotterConfig } from "../core/config.js";
 import { readDirectoryOrEmpty } from "../core/fs.js";
-import { type ArchiveIndexRecord, readIndex } from "../core/index.js";
+import { readIndex, type SessionArchiveIndexRecord } from "../core/index.js";
 import type { ArchivedRetrievalFile, ArchivedRetrievalUnit } from "./types.js";
+
+/**
+ * Retrieval parses session files. A db-snapshot harness archives one whole
+ * native database, which no reader understands yet, so its records and
+ * payloads stay out of the catalog until that harness gets its own reader.
+ */
+const snapshotHarnesses: ReadonlySet<HarnessId> = new Set(
+	adapters.filter((adapter) => adapter.mutationModel === "db-snapshot").map((adapter) => adapter.id),
+);
 
 const UUID_PATTERN = new RegExp(`^${UUID_SOURCE}$`, "i");
 const UUID_IN_FILENAME_PATTERN = new RegExp(`(${UUID_SOURCE})(?:\\.jsonl)?\\.zst$`, "i");
@@ -45,7 +55,7 @@ function inferUnit(harness: HarnessId, harnessPath: string): { id: string; role:
 function indexedFile(
 	archiveRoot: string,
 	machine: string,
-	record: ArchiveIndexRecord,
+	record: SessionArchiveIndexRecord,
 	storedSize: number,
 	storedMtimeMs: number,
 ): ArchivedRetrievalFile {
@@ -71,7 +81,7 @@ function rawFile(
 	storedMtimeMs: number,
 ): ArchivedRetrievalFile | null {
 	const [harnessValue, ...rest] = machinePath.split("/");
-	if (!isHarnessId(harnessValue) || rest.length === 0) {
+	if (!isHarnessId(harnessValue) || snapshotHarnesses.has(harnessValue) || rest.length === 0) {
 		return null;
 	}
 	const inferred = inferUnit(harnessValue, rest.join("/"));
@@ -120,7 +130,7 @@ export async function readArchiveCatalog(
 			rawStats.set(machinePath, { size: stored.size, mtimeMs: stored.mtimeMs });
 		}
 		for (const record of index.records.values()) {
-			if (record.machine !== machine) {
+			if (record.machine !== machine || record.role === "database" || snapshotHarnesses.has(record.harness)) {
 				continue;
 			}
 			const machinePath = portable(record.path);

@@ -11,7 +11,7 @@ import { type BlotterConfig, type RemoteConfig, remoteStatePath } from "../core/
 import { commandOnPath } from "../core/exec.js";
 import { isEnoent, pathExists } from "../core/fs.js";
 import type { BlotterHome } from "../core/home.js";
-import { readIndex } from "../core/index.js";
+import { readDerivedIndex } from "../core/index.js";
 import type { RunStamp } from "../core/stamps.js";
 import { CRON_MARKER, generateCronEntry } from "../schedule/cron.js";
 import { generateLaunchdPlist, LAUNCHD_LABEL } from "../schedule/launchd.js";
@@ -621,8 +621,9 @@ export function retentionFact(): Fact {
 	return fact(
 		"retention",
 		"info",
+		// DRAFT copy
 		risks
-			.map(({ harness, risk }) => `${harness}: ${risk.replace(/\.$/, "")} — the hourly sweep stays ahead of it`)
+			.map(({ harness, risk }) => `${harness}: ${risk.replace(/\.$/, "")}; the hourly sweep stays ahead of it`)
 			.join("\n"),
 		{ risks },
 	);
@@ -772,7 +773,8 @@ export async function collectEnvironmentFacts(context: DoctorContext): Promise<F
 }
 
 export async function readHarnessTallies(context: DoctorContext): Promise<HarnessTally[]> {
-	const index = await readIndex(join(context.config.archiveRoot, context.config.machine, "index.jsonl"));
+	const machineRoot = join(context.config.archiveRoot, context.config.machine);
+	const index = await readDerivedIndex(machineRoot, context.config.machine);
 	return adapters.map((adapter) => {
 		const records = [...index.records.values()].filter((record) => record.harness === adapter.id);
 		return {

@@ -1,10 +1,10 @@
 /**
  * The five-axis harness adapter contract (spec #14, "Adapter contract").
  * Each supported harness is one declaration against this interface; the core
- * consumes (unit, file set, newest mtime) and knows nothing harness-specific.
+ * consumes either explicit session files or one store-wide database snapshot.
  */
 
-export const HARNESS_IDS = ["claude-code", "codex", "pi"] as const;
+export const HARNESS_IDS = ["claude-code", "codex", "pi", "opencode"] as const;
 
 export type HarnessId = (typeof HARNESS_IDS)[number];
 
@@ -40,17 +40,40 @@ export interface SessionUnit {
 	files: SessionFile[];
 }
 
-export interface HarnessAdapter {
+export interface SnapshotSession {
+	id: string;
+	timeCreated: number;
+	timeUpdated: number;
+}
+
+/** One point-in-time copy of a store-wide database, never a synthetic session. */
+export interface DatabaseSnapshotUnit {
+	sourcePath: string;
+	sourceMtimeMs: number;
+	sourceSize: number;
+}
+
+export interface DatabaseSnapshotCapture {
+	contentSha256: string;
+	sizeBytes: number;
+	softwareVersion: string | null;
+	sessions: SnapshotSession[];
+}
+
+interface HarnessAdapterBase {
 	id: HarnessId;
 	displayName: string;
-	mutationModel: MutationModel;
 	/**
 	 * The harness's own deletion behavior, phrased for doctor output.
 	 * null = no known automatic retention.
 	 */
 	retentionRisk: string | null;
-	/** Resolve the live store root: env override first, then the default under `home`. */
+	/** Resolve the live store location: env override first, then the default under `home`. */
 	storeRoot(env: NodeJS.ProcessEnv, home: string): string;
+}
+
+export interface SessionHarnessAdapter extends HarnessAdapterBase {
+	mutationModel: Exclude<MutationModel, "db-snapshot">;
 	/**
 	 * Stat-walk the store into session units. Missing root resolves to [] —
 	 * an absent harness is success, not an error. Must never read file
@@ -63,14 +86,30 @@ export interface HarnessAdapter {
 	resumeHint(unit: { id: string; relPaths: string[] }): string[];
 }
 
+export interface DatabaseSnapshotHarnessAdapter extends HarnessAdapterBase {
+	mutationModel: "db-snapshot";
+	/** The fixed payload name inside each append-only snapshot directory. */
+	snapshotFilename: string;
+	/** An absent database resolves to []; a present database is one store-wide archive unit. */
+	enumerate(storeRoot: string): Promise<DatabaseSnapshotUnit[]>;
+	/** Create and inspect a transactionally consistent native database at `destination`. */
+	snapshot(unit: DatabaseSnapshotUnit, destination: string): Promise<DatabaseSnapshotCapture>;
+	/** Validate a completed native database before it becomes live. */
+	validateSnapshot(snapshotPath: string, sessionId: string): Promise<void>;
+	/** Exact resume guidance printed after a successful store-wide restore. */
+	resumeHint(unit: { id: string; targetPath: string }): string[];
+}
+
+export type HarnessAdapter = SessionHarnessAdapter | DatabaseSnapshotHarnessAdapter;
+
 /**
  * A store blotter recognizes but does not yet archive. Doctor reports these as
  * "found, not yet supported" so coverage gaps are visible instead of silent.
  */
 export interface UnsupportedStore {
-	id: "opencode" | "gemini" | "cursor";
+	id: "gemini" | "cursor";
 	displayName: string;
-	/** The axis that gates support (e.g. opencode is db-snapshot); Cursor does not disclose its persistence. */
+	/** The axis that gates support; Cursor does not disclose its persistence. */
 	mutationModel: MutationModel | "undisclosed";
 	/** The discovered store path when present on this machine, else null. */
 	detect(env: NodeJS.ProcessEnv, home: string): string | null;

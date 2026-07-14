@@ -2,7 +2,9 @@ export const SCHEDULE_ENVIRONMENT_KEYS = [
 	"BLOTTER_HOME",
 	"CLAUDE_CONFIG_DIR",
 	"CODEX_HOME",
+	"OPENCODE_DB",
 	"PI_CODING_AGENT_SESSION_DIR",
+	"XDG_DATA_HOME",
 ] as const;
 
 export type ScheduleEnvironment = ReadonlyMap<string, string>;

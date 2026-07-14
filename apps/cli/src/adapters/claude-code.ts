@@ -1,6 +1,12 @@
 import { join, relative } from "node:path";
 import { readDirectoryOrEmpty, statOrNull } from "../core/fs.js";
-import { type FileRole, type HarnessAdapter, type SessionFile, type SessionUnit, UUID_SOURCE } from "./adapter.js";
+import {
+	type FileRole,
+	type SessionFile,
+	type SessionHarnessAdapter,
+	type SessionUnit,
+	UUID_SOURCE,
+} from "./adapter.js";
 
 const TRANSCRIPT_PATTERN = new RegExp(`^(${UUID_SOURCE})\\.jsonl$`, "i");
 const SIDECAR_DIRECTORY_PATTERN = new RegExp(`^(${UUID_SOURCE})$`, "i");
@@ -81,7 +87,7 @@ async function enumerateProject(storeRoot: string, projectDirectory: string): Pr
 	return [...units.values()].sort((left, right) => left.id.localeCompare(right.id));
 }
 
-export const claudeCodeAdapter: HarnessAdapter = {
+export const claudeCodeAdapter: SessionHarnessAdapter = {
 	id: "claude-code",
 	displayName: "Claude Code",
 	mutationModel: "append-file",

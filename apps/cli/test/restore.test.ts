@@ -1,11 +1,14 @@
-import { mkdir, readFile, rm, stat, utimes, writeFile } from "node:fs/promises";
+import { mkdir, readdir, readFile, rm, stat, utimes, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
+import { zstdCompressSync, zstdDecompressSync } from "node:zlib";
 import { afterEach, describe, expect, test } from "vitest";
 import {
 	type FixtureFile,
 	type FixtureUnit,
 	makeClaudeStore,
 	makeCodexStore,
+	makeOpenCodeStore,
 	makePiStore,
 } from "./helpers/fixtures.js";
 import { makeTempHome, runCli } from "./helpers/run-cli.js";
@@ -21,6 +24,7 @@ interface TestLayout {
 	claudeRoot: string;
 	codexRoot: string;
 	piRoot: string;
+	opencodeDb: string;
 	env: Record<string, string>;
 }
 
@@ -37,6 +41,7 @@ async function makeLayout(): Promise<TestLayout> {
 	const claudeConfigDir = join(home, "stores", "claude");
 	const codexRoot = join(home, "stores", "codex");
 	const piRoot = join(home, "stores", "pi");
+	const opencodeDb = join(home, "stores", "opencode", "opencode.db");
 	return {
 		home,
 		blotterHome,
@@ -44,10 +49,12 @@ async function makeLayout(): Promise<TestLayout> {
 		claudeRoot: join(claudeConfigDir, "projects"),
 		codexRoot,
 		piRoot,
+		opencodeDb,
 		env: {
 			BLOTTER_HOME: blotterHome,
 			CLAUDE_CONFIG_DIR: claudeConfigDir,
 			CODEX_HOME: codexRoot,
+			OPENCODE_DB: opencodeDb,
 			PI_CODING_AGENT_SESSION_DIR: piRoot,
 		},
 	};
@@ -191,6 +198,83 @@ describe("blotter restore", () => {
 		expect(forced.code).toBe(0);
 		expect(forced.stderr).toBe("");
 		await expectRestored(layout.claudeRoot, snapshot);
+	});
+
+	test("restores OpenCode only into absence, clears stale sidecars, and leaves its snapshot immutable", async () => {
+		const layout = await makeLayout();
+		await writeConfig(layout);
+		const fixture = await makeOpenCodeStore(layout.opencodeDb, { version: "1.17.5" });
+		try {
+			const synced = await runCli(["sync"], { home: layout.home, env: layout.env });
+			expect(synced.code, synced.stderr).toBe(0);
+		} finally {
+			fixture.database.close();
+		}
+		const snapshotRoot = join(layout.archiveRoot, MACHINE, "opencode", "snapshots");
+		const snapshotDirectories = await readdir(snapshotRoot);
+		expect(snapshotDirectories).toHaveLength(1);
+		const payloadPath = join(snapshotRoot, snapshotDirectories[0]!, "opencode.db.zst");
+		const archivedBytes = await readFile(payloadPath);
+		const completedBackup = zstdDecompressSync(archivedBytes);
+		await Promise.all([
+			rm(layout.opencodeDb, { force: true }),
+			rm(`${layout.opencodeDb}-wal`, { force: true }),
+			rm(`${layout.opencodeDb}-shm`, { force: true }),
+			rm(join(layout.archiveRoot, MACHINE, "index.jsonl"), { force: true }),
+		]);
+		await writeFile(`${layout.opencodeDb}-wal`, "stale wal");
+		await writeFile(`${layout.opencodeDb}-shm`, "stale shm");
+
+		const restored = await runCli(["restore", fixture.id], { home: layout.home, env: layout.env });
+		expect(restored.code, restored.stderr).toBe(0);
+		expect(restored.stdout).toBe(`restored 1 file to ${layout.opencodeDb}\nopencode -s ${fixture.id}\n`);
+		expect(await readFile(layout.opencodeDb)).toEqual(completedBackup);
+		await expectMissing(`${layout.opencodeDb}-wal`);
+		await expectMissing(`${layout.opencodeDb}-shm`);
+
+		const resumed = new DatabaseSync(layout.opencodeDb);
+		try {
+			resumed
+				.prepare("UPDATE session SET marker = ?, time_updated = ? WHERE id = ?")
+				.run("resume-style mutation", Date.UTC(2026, 0, 3), fixture.id);
+		} finally {
+			resumed.close();
+		}
+		expect(await readFile(payloadPath)).toEqual(archivedBytes);
+
+		const refused = await runCli(["restore", "--force", fixture.id], { home: layout.home, env: layout.env });
+		const recoveryPath = join(dirname(layout.opencodeDb), `opencode-restored-${fixture.id}.db`);
+		expect(refused.code).toBe(1);
+		expect(refused.stdout).toBe("");
+		expect(refused.stderr).toContain(`restore requires an absent OpenCode database: ${layout.opencodeDb}`);
+		expect(refused.stderr).toContain(`OPENCODE_DB=${recoveryPath} opencode -s ${fixture.id}`);
+		const recoveredSideBySide = await runCli(["restore", fixture.id], {
+			home: layout.home,
+			env: { ...layout.env, OPENCODE_DB: recoveryPath },
+		});
+		expect(recoveredSideBySide.code, recoveredSideBySide.stderr).toBe(0);
+		expect(await readFile(recoveryPath)).toEqual(completedBackup);
+		const live = new DatabaseSync(layout.opencodeDb, { readOnly: true });
+		try {
+			expect(live.prepare("SELECT marker FROM session WHERE id = ?").get(fixture.id)).toEqual({
+				marker: "resume-style mutation",
+			});
+		} finally {
+			live.close();
+		}
+
+		await Promise.all([
+			rm(layout.opencodeDb, { force: true }),
+			rm(`${layout.opencodeDb}-wal`, { force: true }),
+			rm(`${layout.opencodeDb}-shm`, { force: true }),
+		]);
+		const corruptedDatabase = Buffer.from(completedBackup);
+		corruptedDatabase[corruptedDatabase.byteLength - 1]! ^= 1;
+		await writeFile(payloadPath, zstdCompressSync(corruptedDatabase));
+		const corrupt = await runCli(["restore", fixture.id], { home: layout.home, env: layout.env });
+		expect(corrupt.code).toBe(1);
+		expect(corrupt.stderr).toContain(`archived database is corrupt: ${payloadPath} (content sha256 mismatch)`);
+		await expectMissing(layout.opencodeDb);
 	});
 
 	test("refuses a corrupt archived payload before writing and still restores an intact unit", async () => {

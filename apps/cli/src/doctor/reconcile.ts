@@ -1,10 +1,22 @@
-import { stat } from "node:fs/promises";
+import { mkdtemp, rm, stat } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { join, relative, sep } from "node:path";
-import { HARNESS_IDS, type HarnessId, isHarnessId, type SessionFile } from "../adapters/adapter.js";
+import {
+	type DatabaseSnapshotUnit,
+	HARNESS_IDS,
+	type HarnessId,
+	isHarnessId,
+	type SessionFile,
+} from "../adapters/adapter.js";
 import { adapters } from "../adapters/registry.js";
 import { shouldArchive } from "../core/archive.js";
 import { readDirectoryOrEmpty, statOrNull } from "../core/fs.js";
-import { type IndexContents, readIndex } from "../core/index.js";
+import {
+	type DatabaseSnapshotIndexRecord,
+	type IndexContents,
+	isDatabaseSnapshotIndexRecord,
+	readDerivedIndex,
+} from "../core/index.js";
 import type { DoctorContext, Fact } from "./facts.js";
 import { ageMs, windowMs } from "./facts.js";
 
@@ -24,12 +36,23 @@ interface IndexDrift {
 	corruptLines: number;
 }
 
-interface SourceEntry {
+interface SessionSourceEntry {
+	kind: "session";
 	harness: HarnessId;
 	file: SessionFile;
 	archivePath: string;
 	relativeArchivePath: string;
 }
+
+interface SnapshotSourceEntry {
+	kind: "db-snapshot";
+	harness: HarnessId;
+	unit: DatabaseSnapshotUnit;
+	contentSha256: string;
+	observedMtimeMs: number;
+}
+
+type SourceEntry = SessionSourceEntry | SnapshotSourceEntry;
 
 function emptyHarness(): HarnessReconciliation {
 	return { sources: 0, archived: 0, missing: 0, stale: 0, pending: 0, orphaned: 0 };
@@ -101,7 +124,6 @@ function anomalyDetail(harnesses: Record<HarnessId, HarnessReconciliation>): str
 
 export async function checkReconciled(context: DoctorContext): Promise<Fact> {
 	const machinePath = join(context.config.archiveRoot, context.config.machine);
-	const indexPath = join(machinePath, "index.jsonl");
 	const harnesses = harnessRecord();
 	const storeRoots = new Map<HarnessId, string>();
 	const sources: SourceEntry[] = [];
@@ -112,10 +134,30 @@ export async function checkReconciled(context: DoctorContext): Promise<Fact> {
 		const storeRoot = adapter.storeRoot(context.env, context.userHome);
 		storeRoots.set(adapter.id, storeRoot);
 		try {
+			if (adapter.mutationModel === "db-snapshot") {
+				for (const unit of await adapter.enumerate(storeRoot)) {
+					const temporaryRoot = await mkdtemp(join(tmpdir(), "blotter-doctor-snapshot-"));
+					try {
+						const capture = await adapter.snapshot(unit, join(temporaryRoot, "snapshot.db"));
+						sources.push({
+							kind: "db-snapshot",
+							harness: adapter.id,
+							unit,
+							contentSha256: capture.contentSha256,
+							observedMtimeMs: Math.max(unit.sourceMtimeMs, ...capture.sessions.map((session) => session.timeUpdated)),
+						});
+						harnesses[adapter.id].sources += 1;
+					} finally {
+						await rm(temporaryRoot, { recursive: true, force: true });
+					}
+				}
+				continue;
+			}
 			for (const unit of await adapter.enumerate(storeRoot)) {
 				for (const file of unit.files) {
 					const relativeArchivePath = join(adapter.id, `${file.relPath}.zst`);
 					sources.push({
+						kind: "session",
 						harness: adapter.id,
 						file,
 						archivePath: join(machinePath, relativeArchivePath),
@@ -132,7 +174,10 @@ export async function checkReconciled(context: DoctorContext): Promise<Fact> {
 	let treeFiles: string[];
 	let index: IndexContents;
 	try {
-		[treeFiles, index] = await Promise.all([walkFiles(machinePath), readIndex(indexPath)]);
+		[treeFiles, index] = await Promise.all([
+			walkFiles(machinePath),
+			readDerivedIndex(machinePath, context.config.machine),
+		]);
 	} catch (error) {
 		return {
 			id: "reconciled",
@@ -142,7 +187,14 @@ export async function checkReconciled(context: DoctorContext): Promise<Fact> {
 			data: { harnesses, enumerationErrors },
 		};
 	}
-	const archiveFiles = treeFiles.filter((path) => relative(machinePath, path) !== "index.jsonl");
+	const archiveFiles = treeFiles.filter((path) => {
+		const archivePath = relative(machinePath, path);
+		return (
+			archivePath !== "index.jsonl" &&
+			!archivePath.endsWith(`${sep}manifest.json`) &&
+			!archivePath.split(sep).includes(".staging")
+		);
+	});
 	const treeRelative = archiveFiles.map((path) => relative(machinePath, path));
 	const treeSet = new Set(treeRelative);
 	for (const archiveRelativePath of treeRelative) {
@@ -153,6 +205,24 @@ export async function checkReconciled(context: DoctorContext): Promise<Fact> {
 	}
 
 	for (const source of sources) {
+		if (source.kind === "db-snapshot") {
+			const newest = [...index.records.values()]
+				.filter(
+					(record): record is DatabaseSnapshotIndexRecord =>
+						record.harness === source.harness && isDatabaseSnapshotIndexRecord(record),
+				)
+				.sort(
+					(left, right) => right.sourceMtimeMs - left.sourceMtimeMs || right.archivedAt.localeCompare(left.archivedAt),
+				)[0];
+			if (newest?.contentSha256 === source.contentSha256) {
+				continue;
+			}
+			const pending = ageMs(source.observedMtimeMs, context.now) < windowMs(context);
+			harnesses[source.harness][
+				newest === undefined ? (pending ? "pending" : "missing") : pending ? "pending" : "stale"
+			] += 1;
+			continue;
+		}
 		let mtimeMs: number | null;
 		try {
 			mtimeMs = await storedMtime(source.archivePath);
@@ -187,7 +257,11 @@ export async function checkReconciled(context: DoctorContext): Promise<Fact> {
 	}
 
 	for (const archiveRelativePath of treeRelative) {
-		const derived = archivedSourcePath(archiveRelativePath, storeRoots);
+		const indexed = index.records.get(archiveRelativePath);
+		const derived =
+			indexed !== undefined && isDatabaseSnapshotIndexRecord(indexed)
+				? { harness: indexed.harness, sourcePath: indexed.source }
+				: archivedSourcePath(archiveRelativePath, storeRoots);
 		if (derived !== null) {
 			try {
 				if (!(await sourceExists(derived.sourcePath))) {

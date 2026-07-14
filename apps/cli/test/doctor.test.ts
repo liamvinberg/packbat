@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { appendFile, chmod, mkdir, readFile, rm, utimes, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, describe, expect, test } from "vitest";
-import { appendJsonLine, makeClaudeStore, makeCodexStore, makePiStore } from "./helpers/fixtures.js";
+import { appendJsonLine, makeClaudeStore, makeCodexStore, makeOpenCodeStore, makePiStore } from "./helpers/fixtures.js";
 import { makeTempHome, runCli } from "./helpers/run-cli.js";
 
 const homes: string[] = [];
@@ -67,6 +67,9 @@ describe("blotter doctor", () => {
 			status: "info",
 			detail: expect.stringContaining("claude-code: Claude Code deletes sessions older than cleanupPeriodDays"),
 		});
+		expect(report.facts[4]?.detail).toContain(
+			"opencode: OpenCode does not automatically prune session history; explicit deletion removes it from the shared SQLite database",
+		);
 		expect(report.facts.find(({ id }) => id === "installed")).toMatchObject({
 			title: "installed",
 			status: "ok",
@@ -365,11 +368,46 @@ describe("blotter doctor", () => {
 		});
 	});
 
-	test("makes unsupported stores visible without treating them as failures", async () => {
+	test("surfaces OpenCode as a supported readable and reconciled database store", async () => {
 		const layout = await initializedHome();
 		const opencodePath = join(layout.home, ".local", "share", "opencode", "opencode.db");
-		await mkdir(join(layout.home, ".local", "share", "opencode"), { recursive: true });
-		await writeFile(opencodePath, "");
+		const fixture = await makeOpenCodeStore(opencodePath);
+		try {
+			const synced = await runCli(["sync"], {
+				home: layout.home,
+				env: { BLOTTER_HOME: layout.blotterHome },
+			});
+			expect(synced.code, synced.stderr).toBe(0);
+			const result = await runCli(["doctor", "--json"], {
+				home: layout.home,
+				env: { BLOTTER_HOME: layout.blotterHome },
+			});
+
+			const report = JSON.parse(result.stdout) as DoctorJson;
+			expect(report.facts.find(({ id }) => id === "unsupported-opencode")).toBeUndefined();
+			expect(report.facts.find(({ id }) => id === "stores-readable")?.data).toMatchObject({
+				present: expect.arrayContaining([opencodePath]),
+			});
+			const reconciled = report.facts.find(({ id }) => id === "reconciled");
+			if (reconciled === undefined) {
+				throw new Error("doctor did not return a reconciled fact");
+			}
+			expect(reconciled?.status, JSON.stringify(reconciled, null, 2)).toBe("ok");
+			expect((reconciled.data as ReconciledData).harnesses.opencode).toMatchObject({
+				missing: 0,
+				stale: 0,
+				pending: 0,
+				orphaned: 0,
+			});
+		} finally {
+			fixture.database.close();
+		}
+	});
+
+	test("keeps unsupported store detection for the remaining adapters", async () => {
+		const layout = await initializedHome();
+		const geminiPath = join(layout.home, ".gemini", "tmp");
+		await mkdir(geminiPath, { recursive: true });
 
 		const result = await runCli(["doctor", "--json"], {
 			home: layout.home,
@@ -377,9 +415,9 @@ describe("blotter doctor", () => {
 		});
 
 		const report = JSON.parse(result.stdout) as DoctorJson;
-		expect(report.facts.find(({ id }) => id === "unsupported-opencode")).toMatchObject({
+		expect(report.facts.find(({ id }) => id === "unsupported-gemini")).toMatchObject({
 			status: "info",
-			detail: `found opencode at ${opencodePath} — not yet supported`,
+			detail: `found gemini at ${geminiPath} — not yet supported`,
 		});
 	});
 

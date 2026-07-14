@@ -1,6 +1,6 @@
 import { mkdir, mkdtemp, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { join } from "node:path";
 import { afterEach, describe, expect, test } from "vitest";
 import { appendJsonLine, makeClaudeStore } from "../../test/helpers/fixtures.js";
 import { claudeCodeAdapter } from "./claude-code.js";
@@ -124,39 +124,26 @@ describe("claudeCodeAdapter", () => {
 
 describe("adapter registry", () => {
 	test("lists every supported adapter and resolves known ids", () => {
-		expect(adapters.map((adapter) => adapter.id)).toEqual(["claude-code", "codex", "pi"]);
+		expect(adapters.map((adapter) => adapter.id)).toEqual(["claude-code", "codex", "pi", "opencode"]);
 		expect(getAdapter("codex")?.id).toBe("codex");
 		expect(getAdapter("unknown")).toBeUndefined();
 	});
 
 	test("detects unsupported stores only when their configured paths exist", async () => {
 		const home = await makeRoot();
-		const xdgDataHome = join(home, "xdg-data");
-		const opencodeDb = join(xdgDataHome, "opencode", "opencode.db");
-		const overrideDb = join(home, "custom", "opencode.db");
 		const geminiRoot = join(home, ".gemini", "tmp");
 		const cursorRoot = join(home, ".cursor");
 		const byId = new Map(unsupportedStores.map((store) => [store.id, store]));
 
-		expect(byId.get("opencode")?.detect({ XDG_DATA_HOME: xdgDataHome }, home)).toBeNull();
 		expect(byId.get("gemini")?.detect({}, home)).toBeNull();
 		expect(byId.get("cursor")?.detect({}, home)).toBeNull();
 
-		await mkdir(join(xdgDataHome, "opencode"), { recursive: true });
-		await writeFile(opencodeDb, "synthetic sqlite fixture");
-		await mkdir(dirname(overrideDb), { recursive: true });
-		await writeFile(overrideDb, "synthetic sqlite fixture");
 		await mkdir(geminiRoot, { recursive: true });
 		await mkdir(cursorRoot, { recursive: true });
 
-		expect(byId.get("opencode")?.detect({ XDG_DATA_HOME: xdgDataHome }, home)).toBe(opencodeDb);
-		expect(byId.get("opencode")?.detect({ OPENCODE_DB: overrideDb, XDG_DATA_HOME: xdgDataHome }, home)).toBe(
-			overrideDb,
-		);
 		expect(byId.get("gemini")?.detect({}, home)).toBe(geminiRoot);
 		expect(byId.get("cursor")?.detect({}, home)).toBe(cursorRoot);
 		expect(unsupportedStores.map(({ id, mutationModel }) => ({ id, mutationModel }))).toEqual([
-			{ id: "opencode", mutationModel: "db-snapshot" },
 			{ id: "gemini", mutationModel: "append-file" },
 			{ id: "cursor", mutationModel: "undisclosed" },
 		]);

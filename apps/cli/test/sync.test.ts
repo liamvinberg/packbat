@@ -1,8 +1,17 @@
-import { mkdir, readFile, rm, stat, utimes, writeFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { mkdir, readdir, readFile, rm, stat, utimes, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { zstdDecompressSync } from "node:zlib";
 import { afterEach, describe, expect, test } from "vitest";
-import { appendJsonLine, type FixtureFile, makeClaudeStore, makeCodexStore, makePiStore } from "./helpers/fixtures.js";
+import {
+	appendJsonLine,
+	type FixtureFile,
+	makeClaudeStore,
+	makeCodexStore,
+	makeOpenCodeStore,
+	makePiStore,
+} from "./helpers/fixtures.js";
 import { makeTempHome, runCli } from "./helpers/run-cli.js";
 
 const MACHINE = "test-machine";
@@ -16,6 +25,7 @@ interface TestLayout {
 	claudeRoot: string;
 	codexRoot: string;
 	piRoot: string;
+	opencodeDb: string;
 	env: Record<string, string>;
 }
 
@@ -27,6 +37,7 @@ async function makeLayout(): Promise<TestLayout> {
 	const claudeConfigDir = join(home, "stores", "claude");
 	const codexRoot = join(home, "stores", "codex");
 	const piRoot = join(home, "stores", "pi");
+	const opencodeDb = join(home, "stores", "opencode", "opencode.db");
 	return {
 		home,
 		blotterHome,
@@ -34,10 +45,12 @@ async function makeLayout(): Promise<TestLayout> {
 		claudeRoot: join(claudeConfigDir, "projects"),
 		codexRoot,
 		piRoot,
+		opencodeDb,
 		env: {
 			BLOTTER_HOME: blotterHome,
 			CLAUDE_CONFIG_DIR: claudeConfigDir,
 			CODEX_HOME: codexRoot,
+			OPENCODE_DB: opencodeDb,
 			PI_CODING_AGENT_SESSION_DIR: piRoot,
 		},
 	};
@@ -156,6 +169,90 @@ describe("blotter sync", () => {
 		expect(zstdDecompressSync(await readFile(storedPath(layout, "pi", pi.files[0]!)))).toEqual(
 			await readFile(pi.files[0]!.absPath),
 		);
+	});
+
+	test("snapshots a WAL database consistently, records its manifest, deduplicates, and repairs its index", async () => {
+		const layout = await makeLayout();
+		await writeConfig(layout);
+		const fixture = await makeOpenCodeStore(layout.opencodeDb, { paddingBytes: 16 * 1024 * 1024, version: "1.17.5" });
+		let generation = 0;
+		const writer = setInterval(() => {
+			generation += 1;
+			fixture.database.exec(`
+				BEGIN IMMEDIATE;
+				UPDATE consistency SET generation = ${generation} WHERE slot = 1;
+				UPDATE consistency SET generation = ${generation} WHERE slot = 2;
+				COMMIT;
+			`);
+			if (generation >= 40) {
+				clearInterval(writer);
+			}
+		}, 10);
+
+		try {
+			const first = await runCli(["sync"], { home: layout.home, env: layout.env });
+			clearInterval(writer);
+			expect(first.code, first.stderr).toBe(0);
+			expect(generation).toBeGreaterThan(0);
+
+			const snapshotRoot = join(layout.archiveRoot, MACHINE, "opencode", "snapshots");
+			const firstSnapshots = (await readdir(snapshotRoot)).sort();
+			expect(firstSnapshots).toHaveLength(1);
+			expect(firstSnapshots[0]).toMatch(/^\d{8}T\d{6}\.\d{3}Z-[0-9a-f]{64}$/);
+			const firstDirectory = join(snapshotRoot, firstSnapshots[0]!);
+			const payloadPath = join(firstDirectory, "opencode.db.zst");
+			const payloadBytes = await readFile(payloadPath);
+			const snapshotBytes = zstdDecompressSync(payloadBytes);
+			const extractedPath = join(layout.home, "completed-backup.db");
+			await writeFile(extractedPath, snapshotBytes);
+			const completed = new DatabaseSync(extractedPath, { readOnly: true });
+			try {
+				expect(completed.prepare("PRAGMA quick_check").get()).toEqual({ quick_check: "ok" });
+				expect(completed.prepare("SELECT id FROM session").get()).toEqual({ id: fixture.id });
+				const consistency = completed.prepare("SELECT generation FROM consistency ORDER BY slot").all();
+				expect(consistency).toHaveLength(2);
+				expect(consistency[0]?.generation).toBe(consistency[1]?.generation);
+			} finally {
+				completed.close();
+			}
+
+			const manifest = JSON.parse(await readFile(join(firstDirectory, "manifest.json"), "utf8")) as Record<
+				string,
+				unknown
+			>;
+			expect(manifest).toMatchObject({
+				v: 1,
+				kind: "db-snapshot",
+				harness: "opencode",
+				sourcePath: layout.opencodeDb,
+				harnessVersion: "1.17.5",
+				contentSha256: createHash("sha256").update(snapshotBytes).digest("hex"),
+				sizeBytes: snapshotBytes.byteLength,
+				sessions: [{ id: fixture.id }],
+				payload: "opencode.db.zst",
+			});
+			expect(await readdir(firstDirectory)).toEqual(["manifest.json", "opencode.db.zst"]);
+
+			const settled = await runCli(["sync"], { home: layout.home, env: layout.env });
+			expect(settled.code, settled.stderr).toBe(0);
+			const settledSnapshots = (await readdir(snapshotRoot)).sort();
+			const deduplicated = await runCli(["sync"], { home: layout.home, env: layout.env });
+			expect(deduplicated.code, deduplicated.stderr).toBe(0);
+			expect(deduplicated.stdout).toContain("unchanged 1");
+			expect((await readdir(snapshotRoot)).sort()).toEqual(settledSnapshots);
+
+			const indexPath = join(layout.archiveRoot, MACHINE, "index.jsonl");
+			await rm(indexPath);
+			const repaired = await runCli(["sync"], { home: layout.home, env: layout.env });
+			expect(repaired.code, repaired.stderr).toBe(0);
+			expect(repaired.stdout).toContain("unchanged 1, failed 0, repaired 1");
+			expect((await readdir(snapshotRoot)).sort()).toEqual(settledSnapshots);
+			const record = JSON.parse((await readFile(indexPath, "utf8")).trim()) as Record<string, unknown>;
+			expect(record).toMatchObject({ harness: "opencode", role: "database", sessions: [{ id: fixture.id }] });
+		} finally {
+			clearInterval(writer);
+			fixture.database.close();
+		}
 	});
 
 	test("rebuilds a missing index from committed payloads without touching them", async () => {

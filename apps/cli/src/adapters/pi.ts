@@ -1,6 +1,6 @@
 import { join, relative } from "node:path";
 import { readDirectoryOrEmpty, statOrNull } from "../core/fs.js";
-import { type HarnessAdapter, type SessionFile, type SessionUnit, UUID_SOURCE } from "./adapter.js";
+import { type SessionFile, type SessionHarnessAdapter, type SessionUnit, UUID_SOURCE } from "./adapter.js";
 
 const SANITIZED_ISO_SOURCE = "\\d{4}-\\d{2}-\\d{2}T\\d{2}-\\d{2}-\\d{2}-\\d{3}Z";
 const SESSION_PATTERN = new RegExp(`^${SANITIZED_ISO_SOURCE}_(${UUID_SOURCE})\\.jsonl$`, "i");
@@ -33,7 +33,7 @@ async function enumerateDirectory(storeRoot: string, directory: string): Promise
 	return units;
 }
 
-export const piAdapter: HarnessAdapter = {
+export const piAdapter: SessionHarnessAdapter = {
 	id: "pi",
 	displayName: "pi",
 	mutationModel: "rewrite-file",

@@ -7,7 +7,12 @@ import { getAdapter } from "../adapters/registry.js";
 import { decompressBytes } from "./compress.js";
 import type { BlotterConfig } from "./config.js";
 import { BlotterError, errorMessage } from "./errors.js";
-import { type ArchiveIndexRecord, readIndex } from "./index.js";
+import {
+	type ArchiveIndexRecord,
+	type DatabaseSnapshotIndexRecord,
+	isDatabaseSnapshotIndexRecord,
+	readDerivedIndex,
+} from "./index.js";
 
 interface ArchivedFile {
 	record: ArchiveIndexRecord;
@@ -16,6 +21,7 @@ interface ArchivedFile {
 }
 
 export interface ArchivedUnit {
+	kind: "session" | "db-snapshot";
 	id: string;
 	harness: HarnessId;
 	machine: string;
@@ -116,6 +122,7 @@ function toArchivedUnit(
 		});
 	const newestSourceMtimeMs = Math.max(...files.map((file) => file.record.sourceMtimeMs));
 	return {
+		kind: "session",
 		id,
 		harness,
 		machine,
@@ -126,16 +133,38 @@ function toArchivedUnit(
 	};
 }
 
+function toArchivedSnapshotUnit(
+	config: BlotterConfig,
+	machine: string,
+	id: string,
+	record: DatabaseSnapshotIndexRecord,
+): ArchivedUnit {
+	const machineRoot = join(config.archiveRoot, machine);
+	const archivePath = join(machineRoot, record.path);
+	assertContained(machineRoot, archivePath, "archive path");
+	return {
+		kind: "db-snapshot",
+		id,
+		harness: record.harness,
+		machine,
+		files: [{ record, relPath: recordRelPath(record), archivePath }],
+		newestSourceMtimeMs: record.sourceMtimeMs,
+		archived: false,
+		supersededLocations: [],
+	};
+}
+
 export async function readArchivedUnits(config: BlotterConfig, machine: string): Promise<ArchivedUnit[]> {
-	const indexPath = join(config.archiveRoot, machine, "index.jsonl");
 	let records: ArchiveIndexRecord[];
 	try {
-		records = [...(await readIndex(indexPath)).records.values()].filter((record) => record.machine === machine);
+		records = [...(await readDerivedIndex(join(config.archiveRoot, machine), machine)).records.values()].filter(
+			(record) => record.machine === machine,
+		);
 	} catch (error) {
 		throw new BlotterError(`could not read archive index for ${machine}: ${errorMessage(error)}`);
 	}
 	const groups = new Map<string, { harness: HarnessId; id: string; records: ArchiveIndexRecord[] }>();
-	for (const record of records) {
+	for (const record of records.filter((record) => !isDatabaseSnapshotIndexRecord(record))) {
 		const key = `${record.harness}\0${record.unit}`;
 		const group = groups.get(key);
 		if (group === undefined) {
@@ -144,14 +173,25 @@ export async function readArchivedUnits(config: BlotterConfig, machine: string):
 			group.records.push(record);
 		}
 	}
-	return [...groups.values()]
-		.map((group) => toArchivedUnit(config, machine, group.harness, group.id, group.records))
-		.sort(
-			(left, right) =>
-				right.newestSourceMtimeMs - left.newestSourceMtimeMs ||
-				left.id.localeCompare(right.id) ||
-				left.harness.localeCompare(right.harness),
-		);
+	const newestSnapshots = new Map<string, { id: string; record: DatabaseSnapshotIndexRecord }>();
+	for (const record of records.filter(isDatabaseSnapshotIndexRecord)) {
+		for (const session of record.sessions) {
+			const key = `${record.harness}\0${session.id}`;
+			const current = newestSnapshots.get(key);
+			if (current === undefined || compareRecordRecency(record, current.record) > 0) {
+				newestSnapshots.set(key, { id: session.id, record });
+			}
+		}
+	}
+	return [
+		...[...groups.values()].map((group) => toArchivedUnit(config, machine, group.harness, group.id, group.records)),
+		...[...newestSnapshots.values()].map(({ id, record }) => toArchivedSnapshotUnit(config, machine, id, record)),
+	].sort(
+		(left, right) =>
+			right.newestSourceMtimeMs - left.newestSourceMtimeMs ||
+			left.id.localeCompare(right.id) ||
+			left.harness.localeCompare(right.harness),
+	);
 }
 
 export function resolveArchivedUnit(units: readonly ArchivedUnit[], prefix: string): ArchivedUnit {
@@ -219,9 +259,88 @@ async function writeRestoredFile(plan: RestorePlan): Promise<void> {
 	}
 }
 
-export async function restoreArchivedUnit(unit: ArchivedUnit, force: boolean): Promise<RestoreResult> {
+async function archivedPayload(file: ArchivedFile): Promise<Buffer> {
+	let archivedBytes: Buffer;
+	try {
+		archivedBytes = await readFile(file.archivePath);
+	} catch (error) {
+		throw new BlotterError(`could not read archived file ${file.archivePath}: ${errorMessage(error)}`);
+	}
+	const actualSha256 = createHash("sha256").update(archivedBytes).digest("hex");
+	if (actualSha256 !== file.record.sha256) {
+		throw new BlotterError(`archived file is corrupt: ${file.archivePath} (sha256 mismatch)`);
+	}
+	try {
+		return decompressBytes(archivedBytes);
+	} catch (error) {
+		throw new BlotterError(`could not read archived file ${file.archivePath}: ${errorMessage(error)}`);
+	}
+}
+
+function sideBySidePath(target: string, sessionId: string): string {
+	// DRAFT copy
+	return join(dirname(target), `opencode-restored-${sessionId}.db`);
+}
+
+async function restoreDatabaseSnapshot(unit: ArchivedUnit): Promise<RestoreResult> {
 	const adapter = getAdapter(unit.harness);
-	if (adapter === undefined) {
+	if (adapter === undefined || adapter.mutationModel !== "db-snapshot") {
+		// DRAFT copy
+		throw new BlotterError(`archive uses unsupported database snapshot harness ${unit.harness}`);
+	}
+	const target = adapter.storeRoot(process.env, homedir());
+	if ((await liveMtime(target)) !== null) {
+		const recoveryPath = sideBySidePath(target, unit.id);
+		// DRAFT copy
+		throw new BlotterError(
+			`restore requires an absent OpenCode database: ${target}\nside-by-side recovery: OPENCODE_DB=${recoveryPath} opencode -s ${unit.id}`,
+		);
+	}
+	const file = unit.files[0];
+	if (file === undefined || unit.files.length !== 1 || !isDatabaseSnapshotIndexRecord(file.record)) {
+		// DRAFT copy
+		throw new BlotterError(`invalid database snapshot archive for ${unit.id}`);
+	}
+	const bytes = await archivedPayload(file);
+	const contentSha256 = createHash("sha256").update(bytes).digest("hex");
+	if (contentSha256 !== file.record.contentSha256) {
+		// DRAFT copy
+		throw new BlotterError(`archived database is corrupt: ${file.archivePath} (content sha256 mismatch)`);
+	}
+	await mkdir(dirname(target), { recursive: true });
+	const temporary = join(dirname(target), `.${basename(target)}.tmp-${process.pid}-${randomUUID()}`);
+	try {
+		await writeFile(temporary, bytes);
+		await adapter.validateSnapshot(temporary, unit.id);
+		if ((await liveMtime(target)) !== null) {
+			const recoveryPath = sideBySidePath(target, unit.id);
+			// DRAFT copy
+			throw new BlotterError(
+				`restore requires an absent OpenCode database: ${target}\nside-by-side recovery: OPENCODE_DB=${recoveryPath} opencode -s ${unit.id}`,
+			);
+		}
+		await Promise.all([rm(`${target}-wal`, { force: true }), rm(`${target}-shm`, { force: true })]);
+		await rename(temporary, target);
+	} catch (error) {
+		await rm(temporary, { force: true });
+		if (error instanceof BlotterError) {
+			throw error;
+		}
+		throw new BlotterError(`could not restore ${target}: ${errorMessage(error)}`);
+	}
+	return {
+		fileCount: 1,
+		targetRoot: target,
+		resumeHints: adapter.resumeHint({ id: unit.id, targetPath: target }),
+	};
+}
+
+export async function restoreArchivedUnit(unit: ArchivedUnit, force: boolean): Promise<RestoreResult> {
+	if (unit.kind === "db-snapshot") {
+		return await restoreDatabaseSnapshot(unit);
+	}
+	const adapter = getAdapter(unit.harness);
+	if (adapter === undefined || adapter.mutationModel === "db-snapshot") {
 		throw new BlotterError(`archive uses unsupported harness ${unit.harness}`);
 	}
 	const targetRoot = adapter.storeRoot(process.env, homedir());

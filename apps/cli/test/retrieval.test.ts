@@ -1,8 +1,10 @@
 import { spawn } from "node:child_process";
-import { readdir, readFile, rm } from "node:fs/promises";
-import { join } from "node:path";
+import { createHash } from "node:crypto";
+import { mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
+import { dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { fileURLToPath } from "node:url";
+import { zstdCompressSync } from "node:zlib";
 import { afterEach, describe, expect, test } from "vitest";
 import {
 	makeRetrievalLayout,
@@ -357,5 +359,54 @@ describe("blotter retrieval", () => {
 		const report = JSON.parse((await command(test, ["search", "needle", "--json"])).stdout) as SearchJson;
 		expect(report.results).toHaveLength(50);
 		expect(report.truncated).toBe(true);
+	});
+
+	test("excludes db-snapshot archives from retrieval until they have a reader", async () => {
+		const test = await layout();
+		await writeArchivedJsonl({
+			layout: test,
+			harness: "claude-code",
+			unit: CLAUDE_ID,
+			relPath: `-synthetic/${CLAUDE_ID}.jsonl`,
+			lines: [{ type: "user", message: { role: "user", content: "session needle" } }],
+		});
+		const snapshotUnit = "20260102T030405.000Z-synthetic";
+		const relativePath = `opencode/snapshots/${snapshotUnit}/opencode.db.zst`;
+		const payload = zstdCompressSync(Buffer.from("SQLite format 3 synthetic database bytes"));
+		const payloadPath = join(test.archiveRoot, "test-machine", ...relativePath.split("/"));
+		await mkdir(dirname(payloadPath), { recursive: true });
+		await writeFile(payloadPath, payload);
+		const record = {
+			v: 1,
+			path: relativePath,
+			harness: "opencode",
+			machine: "test-machine",
+			unit: snapshotUnit,
+			role: "database",
+			source: "/synthetic/opencode.db",
+			sourceMtimeMs: 1_700_000_000_000,
+			sourceSize: 4096,
+			storedSize: payload.byteLength,
+			sha256: createHash("sha256").update(payload).digest("hex"),
+			archivedAt: "2026-01-02T03:04:05.000Z",
+			contentSha256: createHash("sha256").update("synthetic").digest("hex"),
+			snapshotAt: "2026-01-02T03:04:05.000Z",
+			harnessVersion: "1.17.5",
+			sessions: [{ id: "ses_synthetic", timeCreated: 1_700_000_000_000, timeUpdated: 1_700_000_001_000 }],
+		};
+		const indexPath = join(test.archiveRoot, "test-machine", "index.jsonl");
+		await writeFile(indexPath, `${await readFile(indexPath, "utf8")}${JSON.stringify(record)}\n`);
+
+		const rebuilt = await command(test, ["search", "--rebuild", "--json"]);
+		expect(rebuilt.code, rebuilt.stderr).toBe(0);
+		const searched = JSON.parse(
+			(await command(test, ["search", "needle OR synthetic", "--json"])).stdout,
+		) as SearchJson;
+		expect(searched.results).toHaveLength(1);
+		expect(searched.results[0]).toMatchObject({ harness: "claude-code" });
+		expect(searched.warnings).toEqual([]);
+
+		const shown = await command(test, ["show", "ses_synthetic", "--json"]);
+		expect(shown.code).toBe(1);
 	});
 });

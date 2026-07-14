@@ -1,9 +1,11 @@
 import { appendFile, mkdir, utimes, writeFile } from "node:fs/promises";
 import { dirname, extname, join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 
 const CLAUDE_ID = "11111111-1111-4111-8111-111111111111";
 const CODEX_ID = "22222222-2222-4222-8222-222222222222";
 const PI_ID = "33333333-3333-4333-8333-333333333333";
+const OPENCODE_ID = "ses_synthetic_opencode";
 const SYNTHETIC_ISO_TIMESTAMP = "2026-01-02T03:04:05.000Z";
 const SANITIZED_ISO_PATTERN = /^\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d{3}Z$/;
 
@@ -46,6 +48,20 @@ export interface PiStoreOptions extends FixtureFileOptions {
 	encodedCwd?: string;
 	/** Filename-safe ISO timestamp. */
 	timestamp?: string;
+}
+
+export interface OpenCodeStoreOptions {
+	id?: string;
+	version?: string;
+	timeCreated?: number;
+	timeUpdated?: number;
+	paddingBytes?: number;
+}
+
+export interface OpenCodeFixture {
+	id: string;
+	databasePath: string;
+	database: DatabaseSync;
 }
 
 async function setMtime(path: string, mtimeMs: number | undefined): Promise<void> {
@@ -233,4 +249,39 @@ export async function makePiStore(root: string, options: PiStoreOptions = {}): P
 		options.mtimeMs,
 	);
 	return { id, files: [{ absPath, relPath, role: "main" }] };
+}
+
+export async function makeOpenCodeStore(
+	databasePath: string,
+	options: OpenCodeStoreOptions = {},
+): Promise<OpenCodeFixture> {
+	const id = options.id ?? OPENCODE_ID;
+	const timeCreated = options.timeCreated ?? Date.UTC(2026, 0, 2, 3, 4, 5);
+	const timeUpdated = options.timeUpdated ?? timeCreated + 1_000;
+	await mkdir(dirname(databasePath), { recursive: true });
+	const database = new DatabaseSync(databasePath);
+	const paddingBytes = options.paddingBytes ?? 0;
+	database.exec(`
+		PRAGMA journal_mode = WAL;
+		PRAGMA synchronous = NORMAL;
+		PRAGMA wal_autocheckpoint = 0;
+		CREATE TABLE session (
+			id TEXT PRIMARY KEY,
+			version TEXT NOT NULL,
+			time_created INTEGER NOT NULL,
+			time_updated INTEGER NOT NULL,
+			marker TEXT NOT NULL
+		);
+		CREATE TABLE consistency (slot INTEGER PRIMARY KEY, generation INTEGER NOT NULL);
+		INSERT INTO consistency VALUES (1, 0), (2, 0);
+		CREATE TABLE padding (id INTEGER PRIMARY KEY, content BLOB NOT NULL);
+	`);
+	if (paddingBytes > 0) {
+		database.prepare("INSERT INTO padding(content) VALUES (zeroblob(?))").run(paddingBytes);
+	}
+	database.exec("PRAGMA wal_checkpoint(TRUNCATE)");
+	database
+		.prepare("INSERT INTO session (id, version, time_created, time_updated, marker) VALUES (?, ?, ?, ?, ?)")
+		.run(id, options.version ?? "0.0.0-synthetic", timeCreated, timeUpdated, "synthetic fixture");
+	return { id, databasePath, database };
 }
