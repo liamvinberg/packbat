@@ -2,15 +2,15 @@ import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { z } from "zod";
-import { BlotterError } from "./errors.js";
-import type { BlotterHome } from "./home.js";
+import { PackbatError } from "./errors.js";
+import type { PackbatHome } from "./home.js";
 
 export const CONFIG_VERSION = 2;
 
 const rcloneRemoteFields = {
-	/** Full rclone destination, e.g. "blotter-remote:bucket/prefix" or an absolute local path. */
+	/** Full rclone destination, e.g. "packbat-remote:bucket/prefix" or an absolute local path. */
 	destination: z.string().min(1),
-	/** "managed" = blotter-owned rclone.conf; "default" = the user's own rclone config resolution. */
+	/** "managed" = Packbat-owned rclone.conf; "default" = the user's own rclone config resolution. */
 	rcloneConfig: z.enum(["managed", "default"]),
 } as const;
 
@@ -57,8 +57,8 @@ export const configSchema = z.strictObject({
 	offbox: offboxSchema,
 });
 
-export type BlotterConfig = z.infer<typeof configSchema>;
-export type OffboxConfig = BlotterConfig["offbox"];
+export type PackbatConfig = z.infer<typeof configSchema>;
+export type OffboxConfig = PackbatConfig["offbox"];
 export type RemoteConfig = Extract<OffboxConfig, { mode: "configured" }>["remotes"][number];
 
 const legacyConfigSchema = z.strictObject({
@@ -83,11 +83,11 @@ export function remoteStateId(remote: RemoteConfig): string {
 	return createHash("sha256").update(`${remote.type}\0${remote.destination}`).digest("hex");
 }
 
-export function remoteStatePath(home: BlotterHome, remote: RemoteConfig): string {
+export function remoteStatePath(home: PackbatHome, remote: RemoteConfig): string {
 	return join(home.statePath, "offbox", remoteStateId(remote));
 }
 
-function migrateLegacyState(home: BlotterHome, remote: RemoteConfig): void {
+function migrateLegacyState(home: PackbatHome, remote: RemoteConfig): void {
 	const destination = remoteStatePath(home, remote);
 	mkdirSync(destination, { recursive: true });
 	for (const [legacyName, currentName] of [
@@ -116,7 +116,7 @@ function migrateLegacyState(home: BlotterHome, remote: RemoteConfig): void {
 	}
 }
 
-function migrateLegacyConfig(home: BlotterHome, legacy: z.infer<typeof legacyConfigSchema>): BlotterConfig {
+function migrateLegacyConfig(home: PackbatHome, legacy: z.infer<typeof legacyConfigSchema>): PackbatConfig {
 	const offbox: OffboxConfig =
 		legacy.offbox.mode === "skipped"
 			? legacy.offbox
@@ -125,7 +125,7 @@ function migrateLegacyConfig(home: BlotterHome, legacy: z.infer<typeof legacyCon
 					recipient: legacy.offbox.recipient,
 					remotes: [{ type: "rclone", ...legacy.offbox.remote }],
 				};
-	const migrated: BlotterConfig = { ...legacy, version: CONFIG_VERSION, offbox };
+	const migrated: PackbatConfig = { ...legacy, version: CONFIG_VERSION, offbox };
 	if (migrated.offbox.mode === "configured") {
 		migrateLegacyState(home, migrated.offbox.remotes[0]);
 	}
@@ -133,13 +133,13 @@ function migrateLegacyConfig(home: BlotterHome, legacy: z.infer<typeof legacyCon
 	return migrated;
 }
 
-export function loadConfig(home: BlotterHome): BlotterConfig {
+export function loadConfig(home: PackbatHome): PackbatConfig {
 	let raw: string;
 	try {
 		raw = readFileSync(home.configPath, "utf8");
 	} catch (error) {
 		if ((error as NodeJS.ErrnoException).code === "ENOENT") {
-			throw new BlotterError(`no config at ${home.configPath} — run \`blotter init\` first`);
+			throw new PackbatError(`no config at ${home.configPath} — run \`packbat init\` first`);
 		}
 		throw error;
 	}
@@ -147,7 +147,7 @@ export function loadConfig(home: BlotterHome): BlotterConfig {
 	try {
 		parsed = JSON.parse(raw);
 	} catch (error) {
-		throw new BlotterError(`${home.configPath} is not valid JSON: ${(error as Error).message}`);
+		throw new PackbatError(`${home.configPath} is not valid JSON: ${(error as Error).message}`);
 	}
 	const result = configSchema.safeParse(parsed);
 	if (result.success) {
@@ -157,11 +157,11 @@ export function loadConfig(home: BlotterHome): BlotterConfig {
 	if (legacy.success) {
 		return migrateLegacyConfig(home, legacy.data);
 	}
-	throw new BlotterError(`${home.configPath} is invalid:\n${z.prettifyError(result.error)}`);
+	throw new PackbatError(`${home.configPath} is invalid:\n${z.prettifyError(result.error)}`);
 }
 
 /** Atomic write: temp file in the same directory, then rename. */
-export function saveConfig(home: BlotterHome, config: BlotterConfig): void {
+export function saveConfig(home: PackbatHome, config: PackbatConfig): void {
 	mkdirSync(dirname(home.configPath), { recursive: true });
 	const tmp = join(dirname(home.configPath), `.config.json.tmp-${process.pid}`);
 	writeFileSync(tmp, `${JSON.stringify(config, null, "\t")}\n`);

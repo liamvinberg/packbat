@@ -4,7 +4,7 @@ import {
 	Encrypter,
 	generateIdentity as generateAgeIdentity,
 } from "age-encryption";
-import { BlotterError } from "../core/errors.js";
+import { PackbatError } from "../core/errors.js";
 
 export async function generateIdentity(): Promise<string> {
 	return await generateAgeIdentity();
@@ -32,7 +32,7 @@ export function parseIdentityFile(contents: string): string {
 		.map((line) => line.trim())
 		.find((line) => /^AGE-SECRET-KEY-1[0-9A-Z]+$/u.test(line));
 	if (identity === undefined) {
-		throw new BlotterError("identity file does not contain an AGE-SECRET-KEY-1… identity");
+		throw new PackbatError("identity file does not contain an AGE-SECRET-KEY-1… identity");
 	}
 	return identity;
 }

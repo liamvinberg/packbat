@@ -6,10 +6,10 @@ describe("generateLaunchdPlist", () => {
 		expect(
 			generateLaunchdPlist({
 				nodePath: "/opt/node/bin/node",
-				entryPath: "/Users/liam/Library/Application Support/blotter/main.js",
-				logsPath: "/Users/liam/.blotter/logs",
+				entryPath: "/Users/liam/Library/Application Support/packbat/main.js",
+				logsPath: "/Users/liam/.packbat/logs",
 				environment: new Map([
-					["BLOTTER_HOME", "/Users/liam/.blotter"],
+					["PACKBAT_HOME", "/Users/liam/.packbat"],
 					["CLAUDE_CONFIG_DIR", "/Users/liam/Library/Application Support/Claude"],
 					["CODEX_HOME", "/Users/liam/.codex"],
 				]),
@@ -19,17 +19,17 @@ describe("generateLaunchdPlist", () => {
 <plist version="1.0">
 <dict>
 	<key>Label</key>
-	<string>com.blotter.sync</string>
+	<string>dev.packbat.sync</string>
 	<key>ProgramArguments</key>
 	<array>
 		<string>/opt/node/bin/node</string>
-		<string>/Users/liam/Library/Application Support/blotter/main.js</string>
+		<string>/Users/liam/Library/Application Support/packbat/main.js</string>
 		<string>sync</string>
 	</array>
 	<key>EnvironmentVariables</key>
 	<dict>
-		<key>BLOTTER_HOME</key>
-		<string>/Users/liam/.blotter</string>
+		<key>PACKBAT_HOME</key>
+		<string>/Users/liam/.packbat</string>
 		<key>CLAUDE_CONFIG_DIR</key>
 		<string>/Users/liam/Library/Application Support/Claude</string>
 		<key>CODEX_HOME</key>
@@ -45,9 +45,9 @@ describe("generateLaunchdPlist", () => {
 	<key>ProcessType</key>
 	<string>Background</string>
 	<key>StandardOutPath</key>
-	<string>/Users/liam/.blotter/logs/launchd.log</string>
+	<string>/Users/liam/.packbat/logs/launchd.log</string>
 	<key>StandardErrorPath</key>
-	<string>/Users/liam/.blotter/logs/launchd.log</string>
+	<string>/Users/liam/.packbat/logs/launchd.log</string>
 </dict>
 </plist>
 `);
@@ -56,11 +56,11 @@ describe("generateLaunchdPlist", () => {
 	test("omits the environment dictionary when no overrides are set", () => {
 		const plist = generateLaunchdPlist({
 			nodePath: "/opt/node/bin/node",
-			entryPath: "/opt/blotter/main.js",
-			logsPath: "/home/liam/.blotter/logs",
+			entryPath: "/opt/packbat/main.js",
+			logsPath: "/home/liam/.packbat/logs",
 			environment: new Map(),
 		});
 		expect(plist).not.toContain("EnvironmentVariables");
-		expect(plist).not.toContain("BLOTTER_HOME");
+		expect(plist).not.toContain("PACKBAT_HOME");
 	});
 });

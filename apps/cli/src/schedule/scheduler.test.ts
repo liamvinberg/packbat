@@ -12,7 +12,7 @@ afterEach(async () => {
 
 describe.skipIf(process.platform !== "linux")("scheduleKind", () => {
 	test("falls back to cron when the systemd user manager does not answer", async () => {
-		const root = await mkdtemp(join(tmpdir(), "blotter-systemctl-"));
+		const root = await mkdtemp(join(tmpdir(), "packbat-systemctl-"));
 		roots.push(root);
 		const systemctl = join(root, "systemctl");
 		await writeFile(systemctl, "#!/bin/sh\nexit 1\n");

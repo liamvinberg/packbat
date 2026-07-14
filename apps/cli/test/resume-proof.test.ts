@@ -18,7 +18,7 @@ const homes: string[] = [];
 interface ProofLayout {
 	home: string;
 	project: string;
-	blotterHome: string;
+	packbatHome: string;
 	archiveRoot: string;
 	claudeConfigDir: string;
 	codexHome: string;
@@ -27,7 +27,7 @@ interface ProofLayout {
 	geminiHome: string;
 	opencodeDb: string;
 	opencodeDataHome: string;
-	blotterEnv: Record<string, string>;
+	packbatEnv: Record<string, string>;
 }
 
 interface CommandResult {
@@ -41,7 +41,7 @@ interface CommandResult {
 function realHome(): string {
 	const home = process.env.HOME;
 	if (home === undefined || home === "") {
-		throw new Error("BLOTTER_RESUME_PROOF requires HOME to locate the installed harness credentials");
+		throw new Error("PACKBAT_RESUME_PROOF requires HOME to locate the installed harness credentials");
 	}
 	return home;
 }
@@ -167,7 +167,7 @@ async function makeLayout(): Promise<ProofLayout> {
 	const home = await makeTempHome();
 	homes.push(home);
 	const project = join(home, "disposable-project");
-	const blotterHome = join(home, "blotter");
+	const packbatHome = join(home, "packbat");
 	const archiveRoot = join(home, "archive");
 	const claudeConfigDir = join(home, "claude");
 	const codexHome = join(home, "codex");
@@ -176,9 +176,9 @@ async function makeLayout(): Promise<ProofLayout> {
 	const geminiHome = join(home, "gemini-home");
 	const opencodeDb = join(home, "opencode-proof.db");
 	const opencodeDataHome = join(home, "xdg-data");
-	await Promise.all([mkdir(project, { recursive: true }), mkdir(blotterHome, { recursive: true })]);
+	await Promise.all([mkdir(project, { recursive: true }), mkdir(packbatHome, { recursive: true })]);
 	await writeFile(
-		join(blotterHome, "config.json"),
+		join(packbatHome, "config.json"),
 		`${JSON.stringify({
 			version: 1,
 			machine: MACHINE,
@@ -190,7 +190,7 @@ async function makeLayout(): Promise<ProofLayout> {
 	return {
 		home,
 		project,
-		blotterHome,
+		packbatHome,
 		archiveRoot,
 		claudeConfigDir,
 		codexHome,
@@ -199,8 +199,8 @@ async function makeLayout(): Promise<ProofLayout> {
 		geminiHome,
 		opencodeDb,
 		opencodeDataHome,
-		blotterEnv: {
-			BLOTTER_HOME: blotterHome,
+		packbatEnv: {
+			PACKBAT_HOME: packbatHome,
 			CLAUDE_CONFIG_DIR: claudeConfigDir,
 			CODEX_HOME: codexHome,
 			GEMINI_CLI_HOME: geminiHome,
@@ -275,12 +275,12 @@ async function findSessionFile(root: string, id: string): Promise<string> {
 }
 
 async function sync(layout: ProofLayout): Promise<void> {
-	const result = await runCli(["sync"], { home: layout.home, env: layout.blotterEnv });
+	const result = await runCli(["sync"], { home: layout.home, env: layout.packbatEnv });
 	expect(result.code, result.stderr).toBe(0);
 }
 
 async function restore(layout: ProofLayout, id: string, expectedFiles = 1): Promise<void> {
-	const result = await runCli(["restore", id], { home: layout.home, env: layout.blotterEnv });
+	const result = await runCli(["restore", id], { home: layout.home, env: layout.packbatEnv });
 	expect(result.code, result.stderr).toBe(0);
 	expect(result.stdout).toContain(`restored ${expectedFiles} file`);
 }
@@ -304,11 +304,11 @@ afterEach(async () => {
 	await Promise.all(homes.splice(0).map((home) => rm(home, { recursive: true, force: true })));
 });
 
-describe.runIf(process.env.BLOTTER_RESUME_PROOF === "1")("resume proof", () => {
+describe.runIf(process.env.PACKBAT_RESUME_PROOF === "1")("resume proof", () => {
 	const installedGemini = commandOnPath("gemini", process.env);
 	const geminiApiKey = process.env.GEMINI_API_KEY;
 	const canRunGemini =
-		process.env.BLOTTER_RESUME_PROOF === "1" &&
+		process.env.PACKBAT_RESUME_PROOF === "1" &&
 		installedGemini !== null &&
 		geminiApiKey !== undefined &&
 		geminiApiKey !== "";
@@ -317,7 +317,7 @@ describe.runIf(process.env.BLOTTER_RESUME_PROOF === "1")("resume proof", () => {
 		? join(process.env.HOME, ".local", "share", "opencode", "auth.json")
 		: null;
 	const canRunOpenCode =
-		process.env.BLOTTER_RESUME_PROOF === "1" &&
+		process.env.PACKBAT_RESUME_PROOF === "1" &&
 		installedOpenCode !== null &&
 		openCodeAuthSource !== null &&
 		existsSync(openCodeAuthSource);

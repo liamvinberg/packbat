@@ -6,12 +6,12 @@ import { runSearch } from "./commands/search.js";
 import { runShow } from "./commands/show.js";
 import { runStatus } from "./commands/status.js";
 import { runSync } from "./commands/sync.js";
-import { BlotterError } from "./core/errors.js";
+import { PackbatError } from "./core/errors.js";
 
 // DRAFT copy. The command block is pinned byte-for-byte by the retrieval contract.
-const HELP = `blotter — every agent session, kept.
+const HELP = `Packbat — every agent session, kept.
 
-Usage: blotter <command> [options]
+Usage: packbat <command> [options]
 
 Commands:
   init      set up archiving: detect harnesses, schedule the sweep, off-box or skip
@@ -26,7 +26,7 @@ Options:
   -h, --help     show this help
   -v, --version  show version
 
-Run \`blotter <command> --help\` for command options.
+Run \`packbat <command> --help\` for command options.
 `;
 
 const commands: Record<string, (argv: string[]) => Promise<number>> = {
@@ -67,7 +67,7 @@ async function main(argv: string[]): Promise<number> {
 	}
 	const command = commands[first];
 	if (command === undefined) {
-		process.stderr.write(`blotter: unknown command "${first}"\n\n${HELP}`);
+		process.stderr.write(`packbat: unknown command "${first}"\n\n${HELP}`);
 		return 1;
 	}
 	return command(rest);
@@ -78,11 +78,11 @@ main(process.argv.slice(2)).then(
 		process.exitCode = code;
 	},
 	(error: unknown) => {
-		if (error instanceof BlotterError) {
-			process.stderr.write(`blotter: ${error.message}\n`);
+		if (error instanceof PackbatError) {
+			process.stderr.write(`packbat: ${error.message}\n`);
 		} else {
 			process.stderr.write(
-				`blotter: unexpected error\n${error instanceof Error ? (error.stack ?? error.message) : String(error)}\n`,
+				`packbat: unexpected error\n${error instanceof Error ? (error.stack ?? error.message) : String(error)}\n`,
 			);
 		}
 		process.exitCode = 1;

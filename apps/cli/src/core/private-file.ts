@@ -8,7 +8,7 @@ export async function writePrivateFile(
 	options: { overwrite: boolean } = { overwrite: true },
 ): Promise<void> {
 	const directory = dirname(path);
-	const temporary = join(directory, `.blotter-private.tmp-${process.pid}-${randomUUID()}`);
+	const temporary = join(directory, `.packbat-private.tmp-${process.pid}-${randomUUID()}`);
 	await mkdir(directory, { recursive: true });
 	try {
 		await writeFile(temporary, contents, { mode: 0o600 });

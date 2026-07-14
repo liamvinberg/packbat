@@ -3,7 +3,7 @@ import { managedRcloneRemoteName, renderS3Remote, renderSftpRemote } from "./rcl
 
 describe("managed rclone configuration", () => {
 	test("keeps the original section and numbers additional managed remotes", () => {
-		expect([0, 1, 2].map(managedRcloneRemoteName)).toEqual(["blotter", "blotter-2", "blotter-3"]);
+		expect([0, 1, 2].map(managedRcloneRemoteName)).toEqual(["packbat", "packbat-2", "packbat-3"]);
 		expect(
 			renderS3Remote(
 				{
@@ -13,7 +13,7 @@ describe("managed rclone configuration", () => {
 				},
 				managedRcloneRemoteName(1),
 			),
-		).toContain("[blotter-2]");
+		).toContain("[packbat-2]");
 	});
 	test("renders an S3-compatible remote with credentials inline", () => {
 		expect(
@@ -23,7 +23,7 @@ describe("managed rclone configuration", () => {
 				secretAccessKey: "secret-access-key",
 				region: "eu-north-1",
 			}),
-		).toBe(`[blotter]
+		).toBe(`[packbat]
 type = s3
 provider = Other
 access_key_id = access-key-id
@@ -37,7 +37,7 @@ region = eu-north-1
 				accessKeyId: "access-key-id",
 				secretAccessKey: "secret-access-key",
 			}),
-		).toBe(`[blotter]
+		).toBe(`[packbat]
 type = s3
 provider = Other
 access_key_id = access-key-id
@@ -52,16 +52,16 @@ endpoint = https://objects.example.com
 				host: "archive.example.com",
 				user: "backup",
 				port: 2222,
-				keyFile: "/home/liam/.ssh/blotter",
+				keyFile: "/home/liam/.ssh/archive-key",
 			}),
-		).toBe(`[blotter]
+		).toBe(`[packbat]
 type = sftp
 host = archive.example.com
 user = backup
 port = 2222
-key_file = /home/liam/.ssh/blotter
+key_file = /home/liam/.ssh/archive-key
 `);
-		expect(renderSftpRemote({ host: "archive.example.com", user: "backup" })).toBe(`[blotter]
+		expect(renderSftpRemote({ host: "archive.example.com", user: "backup" })).toBe(`[packbat]
 type = sftp
 host = archive.example.com
 user = backup

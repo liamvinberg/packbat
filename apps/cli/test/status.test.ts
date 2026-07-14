@@ -29,17 +29,17 @@ afterEach(async () => {
 
 async function sweptLayout(): Promise<{
 	home: string;
-	blotterHome: string;
+	packbatHome: string;
 	archiveRoot: string;
 	env: Record<string, string>;
 }> {
 	const home = await makeTempHome();
 	homes.push(home);
-	const blotterHome = join(home, "blotter");
+	const packbatHome = join(home, "packbat");
 	const archiveRoot = join(home, "archive");
 	const claudeConfigDir = join(home, "stores", "claude");
 	const env = {
-		BLOTTER_HOME: blotterHome,
+		PACKBAT_HOME: packbatHome,
 		CLAUDE_CONFIG_DIR: claudeConfigDir,
 		CODEX_HOME: join(home, "stores", "codex"),
 		GEMINI_CLI_HOME: join(home, "stores", "gemini"),
@@ -57,10 +57,10 @@ async function sweptLayout(): Promise<{
 	);
 	openCode.database.close();
 	expect(initialized.code).toBe(0);
-	return { home, blotterHome, archiveRoot, env };
+	return { home, packbatHome, archiveRoot, env };
 }
 
-describe("blotter status", () => {
+describe("packbat status", () => {
 	test("prints the one-screen summary without probing the live scheduler", async () => {
 		const layout = await sweptLayout();
 
@@ -117,15 +117,15 @@ describe("blotter status", () => {
 	test("treats missing config and unsupported options as operational errors", async () => {
 		const home = await makeTempHome();
 		homes.push(home);
-		const missing = await runCli(["status"], { home, env: { BLOTTER_HOME: join(home, "blotter") } });
+		const missing = await runCli(["status"], { home, env: { PACKBAT_HOME: join(home, "packbat") } });
 		expect(missing.code).toBe(1);
 		expect(missing.stdout).toBe("");
-		expect(missing.stderr).toContain("blotter init");
+		expect(missing.stderr).toContain("packbat init");
 
 		const invalid = await runCli(["status", "--wat"], { home });
 		expect(invalid.code).toBe(1);
 		expect(invalid.stdout).toBe("");
 		expect(invalid.stderr).toContain("only --json is accepted");
-		expect(invalid.stderr).toContain("Usage: blotter status [--json]");
+		expect(invalid.stderr).toContain("Usage: packbat status [--json]");
 	});
 });

@@ -1,4 +1,4 @@
-import { BlotterError } from "../core/errors.js";
+import { PackbatError } from "../core/errors.js";
 import { getReader } from "../readers/registry.js";
 import type { ArchivedRetrievalUnit, ReadUnitResult } from "./types.js";
 
@@ -39,11 +39,11 @@ export function resolveShowUnit(units: readonly ArchivedRetrievalUnit[], value: 
 	const matches = units.filter((unit) => unit.id.startsWith(value));
 	if (matches.length === 0) {
 		// DRAFT copy
-		throw new BlotterError(`no archived unit matches "${value}"`);
+		throw new PackbatError(`no archived unit matches "${value}"`);
 	}
 	if (matches.length > 1) {
 		// DRAFT copy
-		throw new BlotterError(
+		throw new PackbatError(
 			`archive unit "${value}" is ambiguous:\n${matches.map((unit) => `  ${unit.key}`).join("\n")}`,
 		);
 	}
@@ -68,7 +68,7 @@ function assertServeable(unit: ArchivedRetrievalUnit, result: ReadUnitResult): v
 		return `  ${file.path}: ${codes.join(", ") || file.status}`;
 	});
 	// DRAFT copy
-	throw new BlotterError(`archived unit cannot be read:\n${lines.join("\n")}`);
+	throw new PackbatError(`archived unit cannot be read:\n${lines.join("\n")}`);
 }
 
 export async function readShowUnit(unit: ArchivedRetrievalUnit): Promise<ShowResult> {

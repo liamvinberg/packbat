@@ -8,7 +8,7 @@ import { codexAdapter } from "./codex.js";
 const roots: string[] = [];
 
 async function makeRoot(): Promise<string> {
-	const root = await mkdtemp(join(tmpdir(), "blotter-codex-adapter-"));
+	const root = await mkdtemp(join(tmpdir(), "packbat-codex-adapter-"));
 	roots.push(root);
 	return root;
 }

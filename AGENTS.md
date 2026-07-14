@@ -1,4 +1,4 @@
-# blotter — agent guide
+# Packbat agent guide
 
 CLI that preserves AI-agent sessions (Claude Code, Codex, any harness) as raw, append-only
 archives in a store the user owns. Spec: issue #14. Canonical constraints: `docs/research/`.

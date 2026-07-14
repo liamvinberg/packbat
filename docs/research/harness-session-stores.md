@@ -34,7 +34,7 @@ Current official documentation gives the canonical path as:
 ~/.claude/projects/<project>/<session-id>.jsonl
 ```
 
-`<project>` is the absolute working-directory path with every non-alphanumeric character replaced by `-`. For example, `/Users/liamvinberg/projects/blotter` maps to `-Users-liamvinberg-projects-blotter`. This is a lossy encoding: `/`, `.`, spaces, underscores, and other punctuation all collapse to `-`. The local store had 25 project directories. Of 264 main transcripts with a readable early `cwd`, 263 mapped exactly to their parent project directory. The one mismatch was associated with the relocation behavior discussed below. The official format and path rule are documented in [Manage sessions](https://code.claude.com/docs/en/sessions#where-transcripts-are-stored).
+`<project>` is the absolute working-directory path with every non-alphanumeric character replaced by `-`. For example, `/Users/liamvinberg/projects/packbat` maps to `-Users-liamvinberg-projects-packbat`. This is a lossy encoding: `/`, `.`, spaces, underscores, and other punctuation all collapse to `-`. The local store had 25 project directories. Of 264 main transcripts with a readable early `cwd`, 263 mapped exactly to their parent project directory. The one mismatch was associated with the relocation behavior discussed below. The official format and path rule are documented in [Manage sessions](https://code.claude.com/docs/en/sessions#where-transcripts-are-stored).
 
 Main files are named `<uuid>.jsonl`. A session may also own a same-named directory:
 
@@ -64,7 +64,7 @@ Representative structural metadata, included without record values:
 | Path | Size | mtime |
 |---|---:|---|
 | `~/.claude/projects/-Users-liamvinberg-projects-tesser/<uuid>.jsonl` | 19,777,589 bytes | 2026-06-13 13:18:32 +0200 |
-| `~/.claude/projects/-Users-liamvinberg-projects-blotter/<uuid>.jsonl` | 440,278 bytes | 2026-07-12 20:05:42 +0200 |
+| `~/.claude/projects/-Users-liamvinberg-projects-packbat/<uuid>.jsonl` | 440,278 bytes | 2026-07-12 20:05:42 +0200 |
 | `~/.claude/.last-cleanup` | 24 bytes | 2026-07-12 19:59:34 +0200 |
 
 ### JSONL record shapes
@@ -380,7 +380,7 @@ An exhaustive search of current Codex source and config found no age/count reten
 
 ## Constraints an archiver must satisfy
 
-These are storage/resume constraints only, not recommendations for blotter's archive design.
+These are storage/resume constraints only, not recommendations for Packbat's archive design.
 
 1. **Preserve raw session bytes and filenames.** Both Claude and Codex treat the filename identity as meaningful. Renaming a UUID or rollout timestamp breaks lookup or unarchive reconstruction.
 2. **Snapshot growing JSONL without inventing a new tail.** Both primary harnesses append while active. A captured prefix must remain byte-identical; a partial final line must be recognized as an in-flight snapshot, not normalized silently.
@@ -409,7 +409,7 @@ isolated roots and a disposable session containing only a random fictional coden
   only the live file to version 3. Forking that migrated session created a separate version 3 file with inherited
   context and a `parentSession` reference to the restored path. The compressed archive remained byte-identical.
 
-The executable proof is `apps/cli/test/resume-proof.test.ts` and runs when `BLOTTER_RESUME_PROOF=1`.
+The executable proof is `apps/cli/test/resume-proof.test.ts` and runs when `PACKBAT_RESUME_PROOF=1`.
 
 ## Open questions and settling experiments
 

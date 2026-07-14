@@ -14,8 +14,8 @@ import {
 } from "../retrieval/database.js";
 
 // DRAFT copy. Usage is pinned byte-for-byte by the retrieval contract.
-const USAGE = `Usage: blotter search <query> [--harness <id>] [--machine <name>] [--project <path>] [--since <RFC3339>] [--json]
-       blotter search --rebuild [--json]
+const USAGE = `Usage: packbat search <query> [--harness <id>] [--machine <name>] [--project <path>] [--since <RFC3339>] [--json]
+       packbat search --rebuild [--json]
 `;
 
 interface SearchOptions {
@@ -30,7 +30,7 @@ interface SearchOptions {
 
 function usageError(message: string): null {
 	// DRAFT copy
-	process.stderr.write(`blotter search: ${message}\n\n${USAGE}`);
+	process.stderr.write(`packbat search: ${message}\n\n${USAGE}`);
 	return null;
 }
 
@@ -183,7 +183,7 @@ export async function runSearch(argv: string[]): Promise<number> {
 	});
 	if (!locked.acquired) {
 		// DRAFT copy
-		process.stderr.write("blotter search: retrieval is already running\n");
+		process.stderr.write("packbat search: retrieval is already running\n");
 		return 1;
 	}
 	return locked.value;

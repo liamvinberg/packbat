@@ -8,7 +8,7 @@ import { piAdapter } from "./pi.js";
 const roots: string[] = [];
 
 async function makeRoot(): Promise<string> {
-	const root = await mkdtemp(join(tmpdir(), "blotter-pi-adapter-"));
+	const root = await mkdtemp(join(tmpdir(), "packbat-pi-adapter-"));
 	roots.push(root);
 	return root;
 }

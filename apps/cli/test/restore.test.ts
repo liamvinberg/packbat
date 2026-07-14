@@ -20,7 +20,7 @@ const homes: string[] = [];
 
 interface TestLayout {
 	home: string;
-	blotterHome: string;
+	packbatHome: string;
 	archiveRoot: string;
 	claudeRoot: string;
 	codexRoot: string;
@@ -38,7 +38,7 @@ interface FileSnapshot {
 async function makeLayout(): Promise<TestLayout> {
 	const home = await makeTempHome();
 	homes.push(home);
-	const blotterHome = join(home, "blotter");
+	const packbatHome = join(home, "packbat");
 	const archiveRoot = join(home, "archive");
 	const claudeConfigDir = join(home, "stores", "claude");
 	const codexRoot = join(home, "stores", "codex");
@@ -48,7 +48,7 @@ async function makeLayout(): Promise<TestLayout> {
 	const opencodeDb = join(home, "stores", "opencode", "opencode.db");
 	return {
 		home,
-		blotterHome,
+		packbatHome,
 		archiveRoot,
 		claudeRoot: join(claudeConfigDir, "projects"),
 		codexRoot,
@@ -56,7 +56,7 @@ async function makeLayout(): Promise<TestLayout> {
 		piRoot,
 		opencodeDb,
 		env: {
-			BLOTTER_HOME: blotterHome,
+			PACKBAT_HOME: packbatHome,
 			CLAUDE_CONFIG_DIR: claudeConfigDir,
 			CODEX_HOME: codexRoot,
 			GEMINI_CLI_HOME: geminiHome,
@@ -66,10 +66,10 @@ async function makeLayout(): Promise<TestLayout> {
 	};
 }
 
-async function writeConfig(layout: TestLayout, blotterHome = layout.blotterHome, machine = MACHINE): Promise<void> {
-	await mkdir(blotterHome, { recursive: true });
+async function writeConfig(layout: TestLayout, packbatHome = layout.packbatHome, machine = MACHINE): Promise<void> {
+	await mkdir(packbatHome, { recursive: true });
 	await writeFile(
-		join(blotterHome, "config.json"),
+		join(packbatHome, "config.json"),
 		`${JSON.stringify({
 			version: 1,
 			machine,
@@ -107,7 +107,7 @@ afterEach(async () => {
 	await Promise.all(homes.splice(0).map((home) => rm(home, { recursive: true, force: true })));
 });
 
-describe("blotter restore", () => {
+describe("packbat restore", () => {
 	test("lists units and restores every harness byte-for-byte to its resume placement", async () => {
 		const layout = await makeLayout();
 		await writeConfig(layout);
@@ -389,12 +389,12 @@ describe("blotter restore", () => {
 		});
 		expect(missingIdentity.code).toBe(1);
 		expect(missingIdentity.stderr).toContain("--from-remote requires --identity");
-		expect(missingIdentity.stderr).toContain("Usage: blotter restore");
+		expect(missingIdentity.stderr).toContain("Usage: packbat restore");
 
 		const shortFlag = await runCli(["restore", "-x"], { home: layout.home, env: layout.env });
 		expect(shortFlag.code).toBe(1);
 		expect(shortFlag.stderr).toContain("unknown option -x");
-		expect(shortFlag.stderr).toContain("Usage: blotter restore");
+		expect(shortFlag.stderr).toContain("Usage: packbat restore");
 	});
 
 	test("restores archived Codex units and selects only the newest location when both states exist", async () => {
@@ -482,12 +482,12 @@ describe("blotter restore", () => {
 
 	test("lists and restores another machine tree through the default machine config", async () => {
 		const layout = await makeLayout();
-		await writeConfig(layout, layout.blotterHome, "newbox");
-		const oldboxHome = join(layout.home, "oldbox-blotter");
+		await writeConfig(layout, layout.packbatHome, "newbox");
+		const oldboxHome = join(layout.home, "oldbox-packbat");
 		await writeConfig(layout, oldboxHome, "oldbox");
 		const codex = await makeCodexStore(layout.codexRoot, { mtimeMs: SOURCE_MTIME_MS });
 		const snapshot = await snapshotFiles(codex.files);
-		const oldboxEnv = { ...layout.env, BLOTTER_HOME: oldboxHome };
+		const oldboxEnv = { ...layout.env, PACKBAT_HOME: oldboxHome };
 		expect((await runCli(["sync"], { home: layout.home, env: oldboxEnv })).code).toBe(0);
 		await rm(layout.codexRoot, { recursive: true, force: true });
 

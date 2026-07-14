@@ -9,17 +9,17 @@ describe("recovery kit", () => {
 			remotes: [
 				{
 					type: "s3-compatible",
-					destination: "backup:blotter/archive",
+					destination: "vault:agent-sessions/archive",
 					endpoint: "https://objects.example.com",
-					bucket: "blotter",
+					bucket: "agent-sessions",
 					prefix: "archive",
 				},
 			],
 			createdAt: "2026-07-13T10:11:12.000Z",
 		});
 
-		expect(kit).toBe(`blotter recovery kit
-blotter version: 0.1.0
+		expect(kit).toBe(`Packbat recovery kit
+Packbat version: 0.1.0
 format: 2
 created: 2026-07-13T10:11:12.000Z
 
@@ -32,16 +32,16 @@ age1syntheticrecipient12345678
 Remote
 type: s3-compatible
 endpoint: https://objects.example.com
-bucket: blotter
+bucket: agent-sessions
 prefix: archive
-destination: backup:blotter/archive
+destination: vault:agent-sessions/archive
 
 Fresh-machine setup
-Configure rclone access to backup:blotter/archive, then run:
-blotter init --yes --offbox remote --offbox-remote backup:blotter/archive --age-recipient age1syntheticrecipient12345678 --rclone-config default
+Configure rclone access to vault:agent-sessions/archive, then run:
+packbat init --yes --offbox remote --offbox-remote vault:agent-sessions/archive --age-recipient age1syntheticrecipient12345678 --rclone-config default
 
 Fresh-machine restore
-blotter restore --from-remote --identity <kit-file> <unit> --machine <source-machine>
+packbat restore --from-remote --identity <kit-file> <unit> --machine <source-machine>
 
 Raw age fallback
 age -d -i <kit-file> -o <archive-file> <archive-file>.age

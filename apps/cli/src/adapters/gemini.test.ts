@@ -8,7 +8,7 @@ import { geminiAdapter } from "./gemini.js";
 const roots: string[] = [];
 
 async function makeRoot(): Promise<string> {
-	const root = await mkdtemp(join(tmpdir(), "blotter-gemini-adapter-"));
+	const root = await mkdtemp(join(tmpdir(), "packbat-gemini-adapter-"));
 	roots.push(root);
 	return root;
 }

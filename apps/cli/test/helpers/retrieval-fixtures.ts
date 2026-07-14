@@ -8,7 +8,7 @@ import { makeTempHome } from "./run-cli.js";
 
 export interface RetrievalLayout {
 	home: string;
-	blotterHome: string;
+	packbatHome: string;
 	archiveRoot: string;
 	env: Record<string, string>;
 }
@@ -21,11 +21,11 @@ export interface SyntheticArchiveFile {
 
 export async function makeRetrievalLayout(): Promise<RetrievalLayout> {
 	const home = await makeTempHome();
-	const blotterHome = join(home, "blotter");
+	const packbatHome = join(home, "packbat");
 	const archiveRoot = join(home, "archive");
-	await mkdir(blotterHome, { recursive: true });
+	await mkdir(packbatHome, { recursive: true });
 	await writeFile(
-		join(blotterHome, "config.json"),
+		join(packbatHome, "config.json"),
 		`${JSON.stringify({
 			version: 1,
 			machine: "test-machine",
@@ -34,7 +34,7 @@ export async function makeRetrievalLayout(): Promise<RetrievalLayout> {
 			offbox: { mode: "skipped", skippedAt: "2026-01-02T03:04:05.000Z" },
 		})}\n`,
 	);
-	return { home, blotterHome, archiveRoot, env: { BLOTTER_HOME: blotterHome } };
+	return { home, packbatHome, archiveRoot, env: { PACKBAT_HOME: packbatHome } };
 }
 
 export async function writeArchivedJsonl(options: {

@@ -12,7 +12,7 @@ import {
 	type StampRead,
 } from "../doctor/facts.js";
 
-const USAGE = "Usage: blotter status [--json]\n";
+const USAGE = "Usage: packbat status [--json]\n";
 
 function parseOptions(argv: string[]): { json: boolean } | null {
 	if (argv.length === 0) {
@@ -21,7 +21,7 @@ function parseOptions(argv: string[]): { json: boolean } | null {
 	if (argv.length === 1 && argv[0] === "--json") {
 		return { json: true };
 	}
-	process.stderr.write(`blotter status: only --json is accepted\n\n${USAGE}`);
+	process.stderr.write(`packbat status: only --json is accepted\n\n${USAGE}`);
 	return null;
 }
 

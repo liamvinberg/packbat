@@ -1,5 +1,5 @@
 {
-	"name": "blotter-monorepo",
+	"name": "packbat-monorepo",
 	"private": true,
 	"packageManager": "pnpm@11.5.3",
 	"engines": {
@@ -8,10 +8,14 @@
 	"scripts": {
 		"build": "pnpm -r build",
 		"check": "biome check .",
+		"release:check": "node scripts/release-check.mjs",
 		"test": "pnpm -r test",
 		"typecheck": "pnpm -r typecheck"
 	},
 	"devDependencies": {
 		"@biomejs/biome": "^2.5.3"
+	},
+	"dependencies": {
+		"packbat": "link:apps/cli"
 	}
 }

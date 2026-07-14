@@ -1,19 +1,39 @@
 {
-	"name": "blotter",
+	"name": "packbat",
 	"version": "0.1.0",
 	"description": "Every agent session, kept. Preserves AI-agent sessions as raw, append-only archives in a store you own.",
 	"license": "MIT",
+	"author": "Liam Vinberg",
+	"homepage": "https://packbat.dev",
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/liamvinberg/packbat.git"
+	},
+	"bugs": {
+		"url": "https://github.com/liamvinberg/packbat/issues"
+	},
+	"keywords": [
+		"ai-agents",
+		"archive",
+		"backup",
+		"cli"
+	],
 	"type": "module",
 	"engines": {
 		"node": ">=22.16"
 	},
 	"bin": {
-		"blotter": "./bin/blotter.js"
+		"packbat": "./bin/packbat.js"
 	},
 	"files": [
 		"bin",
-		"dist"
+		"dist",
+		"README.md",
+		"LICENSE"
 	],
+	"publishConfig": {
+		"access": "public"
+	},
 	"scripts": {
 		"build": "tsup",
 		"dev": "tsx src/main.ts",

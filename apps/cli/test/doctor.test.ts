@@ -14,9 +14,9 @@ import { makeTempHome, runCli } from "./helpers/run-cli.js";
 
 const homes: string[] = [];
 
-function remoteStateDirectory(blotterHome: string, destination: string): string {
+function remoteStateDirectory(packbatHome: string, destination: string): string {
 	const id = createHash("sha256").update(`rclone\0${destination}`).digest("hex");
-	return join(blotterHome, "state", "offbox", id);
+	return join(packbatHome, "state", "offbox", id);
 }
 
 interface JsonFact {
@@ -44,26 +44,26 @@ afterEach(async () => {
 	await Promise.all(homes.splice(0).map((home) => rm(home, { recursive: true, force: true })));
 });
 
-async function initializedHome(): Promise<{ home: string; blotterHome: string; archiveRoot: string }> {
+async function initializedHome(): Promise<{ home: string; packbatHome: string; archiveRoot: string }> {
 	const home = await makeTempHome();
 	homes.push(home);
-	const blotterHome = join(home, "blotter");
+	const packbatHome = join(home, "packbat");
 	const archiveRoot = join(home, "archive");
 	const result = await runCli(["init", "--yes", "--archive-root", archiveRoot, "--offbox", "skip", "--no-activate"], {
 		home,
-		env: { BLOTTER_HOME: blotterHome },
+		env: { PACKBAT_HOME: packbatHome },
 	});
 	expect(result.code).toBe(0);
-	return { home, blotterHome, archiveRoot };
+	return { home, packbatHome, archiveRoot };
 }
 
-describe("blotter doctor", () => {
+describe("packbat doctor", () => {
 	test("reports the four independent facts and environment checks as versioned JSON", async () => {
 		const layout = await initializedHome();
 
 		const result = await runCli(["doctor", "--json"], {
 			home: layout.home,
-			env: { BLOTTER_HOME: layout.blotterHome },
+			env: { PACKBAT_HOME: layout.packbatHome },
 		});
 
 		const report = JSON.parse(result.stdout) as DoctorJson;
@@ -104,35 +104,35 @@ describe("blotter doctor", () => {
 			status: "info",
 			detail: expect.stringContaining("skipped"),
 		});
-		expect(await readFile(join(layout.blotterHome, "config.json"), "utf8")).toContain('"version": 2');
+		expect(await readFile(join(layout.packbatHome, "config.json"), "utf8")).toContain('"version": 2');
 		expect([0, 2]).toContain(result.code);
 		expect(result.stderr).toBe("");
 	});
 
 	test.skipIf(process.platform !== "darwin")("rejects a tampered launchd artifact and prints its remedy", async () => {
 		const layout = await initializedHome();
-		const plistPath = join(layout.home, "Library", "LaunchAgents", "com.blotter.sync.plist");
+		const plistPath = join(layout.home, "Library", "LaunchAgents", "dev.packbat.sync.plist");
 		await appendFile(plistPath, "<!-- tampered -->\n");
 
 		const result = await runCli(["doctor"], {
 			home: layout.home,
-			env: { BLOTTER_HOME: layout.blotterHome },
+			env: { PACKBAT_HOME: layout.packbatHome },
 		});
 
 		expect(result.code).toBe(2);
 		expect(result.stdout).toContain("✗ installed: launchd artifact does not match");
 		expect(result.stdout).toContain("problems:");
-		expect(result.stdout).toContain("installed: re-run `blotter init`");
+		expect(result.stdout).toContain("installed: re-run `packbat init`");
 		expect(result.stderr).toBe("");
 	});
 
 	test.skipIf(process.platform !== "darwin")("reports a missing launchd artifact", async () => {
 		const layout = await initializedHome();
-		await rm(join(layout.home, "Library", "LaunchAgents", "com.blotter.sync.plist"));
+		await rm(join(layout.home, "Library", "LaunchAgents", "dev.packbat.sync.plist"));
 
 		const result = await runCli(["doctor", "--json"], {
 			home: layout.home,
-			env: { BLOTTER_HOME: layout.blotterHome },
+			env: { PACKBAT_HOME: layout.packbatHome },
 		});
 
 		const report = JSON.parse(result.stdout) as DoctorJson;
@@ -145,13 +145,13 @@ describe("blotter doctor", () => {
 
 	test.skipIf(process.platform !== "darwin")("catches a dead node path embedded in the schedule", async () => {
 		const layout = await initializedHome();
-		const plistPath = join(layout.home, "Library", "LaunchAgents", "com.blotter.sync.plist");
+		const plistPath = join(layout.home, "Library", "LaunchAgents", "dev.packbat.sync.plist");
 		const plist = await readFile(plistPath, "utf8");
 		await writeFile(plistPath, plist.replace(process.execPath, "/synthetic/missing-node"));
 
 		const result = await runCli(["doctor", "--json"], {
 			home: layout.home,
-			env: { BLOTTER_HOME: layout.blotterHome },
+			env: { PACKBAT_HOME: layout.packbatHome },
 		});
 
 		const report = JSON.parse(result.stdout) as DoctorJson;
@@ -174,17 +174,17 @@ describe("blotter doctor", () => {
 			failed: ok ? 0 : 1,
 		});
 		await writeFile(
-			join(layout.blotterHome, "state", "last-success.json"),
+			join(layout.packbatHome, "state", "last-success.json"),
 			`${JSON.stringify(stamp(new Date(now - 3 * 60 * 60 * 1000).toISOString(), true))}\n`,
 		);
 		await writeFile(
-			join(layout.blotterHome, "state", "last-run.json"),
+			join(layout.packbatHome, "state", "last-run.json"),
 			`${JSON.stringify(stamp(new Date(now - 5 * 60 * 1000).toISOString(), false))}\n`,
 		);
 
 		const result = await runCli(["doctor", "--json"], {
 			home: layout.home,
-			env: { BLOTTER_HOME: layout.blotterHome },
+			env: { PACKBAT_HOME: layout.packbatHome },
 		});
 
 		const report = JSON.parse(result.stdout) as DoctorJson;
@@ -198,11 +198,11 @@ describe("blotter doctor", () => {
 
 	test("reports a missing success stamp as never succeeded", async () => {
 		const layout = await initializedHome();
-		await rm(join(layout.blotterHome, "state", "last-success.json"));
+		await rm(join(layout.packbatHome, "state", "last-success.json"));
 
 		const result = await runCli(["doctor", "--json"], {
 			home: layout.home,
-			env: { BLOTTER_HOME: layout.blotterHome },
+			env: { PACKBAT_HOME: layout.packbatHome },
 		});
 
 		const report = JSON.parse(result.stdout) as DoctorJson;
@@ -213,7 +213,7 @@ describe("blotter doctor", () => {
 		});
 		const human = await runCli(["doctor"], {
 			home: layout.home,
-			env: { BLOTTER_HOME: layout.blotterHome },
+			env: { PACKBAT_HOME: layout.packbatHome },
 		});
 		expect(human.stdout).toContain("Claude Code's 30-day cleanup keeps running while sweeps fail");
 	});
@@ -221,14 +221,14 @@ describe("blotter doctor", () => {
 	test("classifies missing, stale, pending, orphaned, and index drift per harness", async () => {
 		const home = await makeTempHome();
 		homes.push(home);
-		const blotterHome = join(home, "blotter");
+		const packbatHome = join(home, "packbat");
 		const archiveRoot = join(home, "archive");
 		const claudeConfigDir = join(home, "stores", "claude");
 		const claudeRoot = join(claudeConfigDir, "projects");
 		const codexRoot = join(home, "stores", "codex");
 		const piRoot = join(home, "stores", "pi");
 		const env = {
-			BLOTTER_HOME: blotterHome,
+			PACKBAT_HOME: packbatHome,
 			CLAUDE_CONFIG_DIR: claudeConfigDir,
 			CODEX_HOME: codexRoot,
 			PI_CODING_AGENT_SESSION_DIR: piRoot,
@@ -251,7 +251,7 @@ describe("blotter doctor", () => {
 			mtimeMs: gapMtime,
 		});
 		await makePiStore(piRoot, { mtimeMs: Date.now() });
-		const config = JSON.parse(await readFile(join(blotterHome, "config.json"), "utf8")) as { machine: string };
+		const config = JSON.parse(await readFile(join(packbatHome, "config.json"), "utf8")) as { machine: string };
 		const indexPath = join(archiveRoot, config.machine, "index.jsonl");
 		const indexLines = (await readFile(indexPath, "utf8")).trimEnd().split("\n");
 		await writeFile(indexPath, `${indexLines.slice(1).join("\n")}\nnot-json\n`);
@@ -273,10 +273,10 @@ describe("blotter doctor", () => {
 	test("treats indexed payload loss as a problem while other index drift stays informational", async () => {
 		const home = await makeTempHome();
 		homes.push(home);
-		const blotterHome = join(home, "blotter");
+		const packbatHome = join(home, "packbat");
 		const archiveRoot = join(home, "archive");
 		const codexRoot = join(home, "stores", "codex");
-		const env = { BLOTTER_HOME: blotterHome, CODEX_HOME: codexRoot };
+		const env = { PACKBAT_HOME: packbatHome, CODEX_HOME: codexRoot };
 		const first = await makeCodexStore(codexRoot, { mtimeMs: Date.now() - 60_000 });
 		await makeCodexStore(codexRoot, {
 			id: "44444444-4444-4444-8444-444444444444",
@@ -291,7 +291,7 @@ describe("blotter doctor", () => {
 				})
 			).code,
 		).toBe(0);
-		const config = JSON.parse(await readFile(join(blotterHome, "config.json"), "utf8")) as { machine: string };
+		const config = JSON.parse(await readFile(join(packbatHome, "config.json"), "utf8")) as { machine: string };
 		const machineRoot = join(archiveRoot, config.machine);
 		const indexPath = join(machineRoot, "index.jsonl");
 		const records = (await readFile(indexPath, "utf8"))
@@ -325,7 +325,7 @@ describe("blotter doctor", () => {
 
 	test("reports configured off-box without a success stamp as a problem", async () => {
 		const layout = await initializedHome();
-		const configPath = join(layout.blotterHome, "config.json");
+		const configPath = join(layout.packbatHome, "config.json");
 		const config = JSON.parse(await readFile(configPath, "utf8")) as Record<string, unknown>;
 		config.offbox = {
 			mode: "configured",
@@ -336,7 +336,7 @@ describe("blotter doctor", () => {
 
 		const result = await runCli(["doctor", "--json"], {
 			home: layout.home,
-			env: { BLOTTER_HOME: layout.blotterHome },
+			env: { PACKBAT_HOME: layout.packbatHome },
 		});
 
 		const report = JSON.parse(result.stdout) as DoctorJson;
@@ -349,7 +349,7 @@ describe("blotter doctor", () => {
 
 	test("reports a configured off-box with a fresh success stamp as healthy", async () => {
 		const layout = await initializedHome();
-		const configPath = join(layout.blotterHome, "config.json");
+		const configPath = join(layout.packbatHome, "config.json");
 		const config = JSON.parse(await readFile(configPath, "utf8")) as Record<string, unknown>;
 		config.offbox = {
 			mode: "configured",
@@ -358,7 +358,7 @@ describe("blotter doctor", () => {
 		};
 		await writeFile(configPath, `${JSON.stringify(config)}\n`);
 		const finishedAt = new Date().toISOString();
-		const stateRoot = remoteStateDirectory(layout.blotterHome, "/synthetic/remote");
+		const stateRoot = remoteStateDirectory(layout.packbatHome, "/synthetic/remote");
 		await mkdir(stateRoot, { recursive: true });
 		await writeFile(
 			join(stateRoot, "last-success.json"),
@@ -367,7 +367,7 @@ describe("blotter doctor", () => {
 
 		const result = await runCli(["doctor", "--json"], {
 			home: layout.home,
-			env: { BLOTTER_HOME: layout.blotterHome },
+			env: { PACKBAT_HOME: layout.packbatHome },
 		});
 
 		const report = JSON.parse(result.stdout) as DoctorJson;
@@ -385,12 +385,12 @@ describe("blotter doctor", () => {
 		try {
 			const synced = await runCli(["sync"], {
 				home: layout.home,
-				env: { BLOTTER_HOME: layout.blotterHome },
+				env: { PACKBAT_HOME: layout.packbatHome },
 			});
 			expect(synced.code, synced.stderr).toBe(0);
 			const result = await runCli(["doctor", "--json"], {
 				home: layout.home,
-				env: { BLOTTER_HOME: layout.blotterHome },
+				env: { PACKBAT_HOME: layout.packbatHome },
 			});
 
 			const report = JSON.parse(result.stdout) as DoctorJson;
@@ -422,14 +422,14 @@ describe("blotter doctor", () => {
 			(
 				await runCli(["sync"], {
 					home: layout.home,
-					env: { BLOTTER_HOME: layout.blotterHome },
+					env: { PACKBAT_HOME: layout.packbatHome },
 				})
 			).code,
 		).toBe(0);
 
 		const result = await runCli(["doctor", "--json"], {
 			home: layout.home,
-			env: { BLOTTER_HOME: layout.blotterHome },
+			env: { PACKBAT_HOME: layout.packbatHome },
 		});
 
 		const report = JSON.parse(result.stdout) as DoctorJson;
@@ -457,7 +457,7 @@ describe("blotter doctor", () => {
 
 		const result = await runCli(["doctor", "--json"], {
 			home: layout.home,
-			env: { BLOTTER_HOME: layout.blotterHome },
+			env: { PACKBAT_HOME: layout.packbatHome },
 		});
 
 		const report = JSON.parse(result.stdout) as DoctorJson;
@@ -478,7 +478,7 @@ describe("blotter doctor", () => {
 		try {
 			result = await runCli(["doctor", "--json"], {
 				home: layout.home,
-				env: { BLOTTER_HOME: layout.blotterHome },
+				env: { PACKBAT_HOME: layout.packbatHome },
 			});
 		} finally {
 			await chmod(codexRoot, 0o700);
@@ -495,12 +495,12 @@ describe("blotter doctor", () => {
 		const layout = await initializedHome();
 		const result = await runCli(["doctor", "--json", "--json"], {
 			home: layout.home,
-			env: { BLOTTER_HOME: layout.blotterHome },
+			env: { PACKBAT_HOME: layout.packbatHome },
 		});
 
 		expect(result.code).toBe(1);
 		expect(result.stdout).toBe("");
 		expect(result.stderr).toContain("only --json is accepted");
-		expect(result.stderr).toContain("Usage: blotter doctor [--json]");
+		expect(result.stderr).toContain("Usage: packbat doctor [--json]");
 	});
 });

@@ -12,9 +12,9 @@ import {
 	type ScheduleInstallResult,
 	scheduleWasActivated,
 } from "../schedule/scheduler.js";
-import { type BlotterConfig, CONFIG_VERSION, loadConfig, type OffboxConfig, saveConfig } from "./config.js";
-import { BlotterError } from "./errors.js";
-import type { BlotterHome } from "./home.js";
+import { CONFIG_VERSION, loadConfig, type OffboxConfig, type PackbatConfig, saveConfig } from "./config.js";
+import { PackbatError } from "./errors.js";
+import type { PackbatHome } from "./home.js";
 import { defaultMachineName } from "./machine.js";
 
 export interface InitDetection {
@@ -48,18 +48,18 @@ export function detectInitStores(homePath: string): InitDetection {
 }
 
 export async function writeInitConfig(
-	home: BlotterHome,
+	home: PackbatHome,
 	archiveRoot: string,
 	offbox?: OffboxConfig,
-): Promise<BlotterConfig> {
+): Promise<PackbatConfig> {
 	if (!isAbsolute(archiveRoot)) {
-		throw new BlotterError("archive root must be absolute");
+		throw new PackbatError("archive root must be absolute");
 	}
-	let config: BlotterConfig;
+	let config: PackbatConfig;
 	if (existsSync(home.configPath)) {
 		config = loadConfig(home);
 		if (archiveRoot !== config.archiveRoot) {
-			throw new BlotterError(`archive root is already ${config.archiveRoot}; edit config.json to move the archive`);
+			throw new PackbatError(`archive root is already ${config.archiveRoot}; edit config.json to move the archive`);
 		}
 		if (offbox !== undefined) {
 			config = { ...config, offbox };
@@ -82,7 +82,7 @@ export async function writeInitConfig(
 	return config;
 }
 
-export async function createInitScheduleOptions(home: BlotterHome, homePath: string): Promise<ScheduleInstallOptions> {
+export async function createInitScheduleOptions(home: PackbatHome, homePath: string): Promise<ScheduleInstallOptions> {
 	const entryArgument = process.argv[1];
 	if (entryArgument === undefined) {
 		throw new Error("CLI entry path is unavailable");

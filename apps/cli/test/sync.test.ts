@@ -21,7 +21,7 @@ const homes: string[] = [];
 
 interface TestLayout {
 	home: string;
-	blotterHome: string;
+	packbatHome: string;
 	archiveRoot: string;
 	claudeRoot: string;
 	codexRoot: string;
@@ -34,7 +34,7 @@ interface TestLayout {
 async function makeLayout(): Promise<TestLayout> {
 	const home = await makeTempHome();
 	homes.push(home);
-	const blotterHome = join(home, "blotter");
+	const packbatHome = join(home, "packbat");
 	const archiveRoot = join(home, "archive");
 	const claudeConfigDir = join(home, "stores", "claude");
 	const codexRoot = join(home, "stores", "codex");
@@ -44,7 +44,7 @@ async function makeLayout(): Promise<TestLayout> {
 	const opencodeDb = join(home, "stores", "opencode", "opencode.db");
 	return {
 		home,
-		blotterHome,
+		packbatHome,
 		archiveRoot,
 		claudeRoot: join(claudeConfigDir, "projects"),
 		codexRoot,
@@ -52,7 +52,7 @@ async function makeLayout(): Promise<TestLayout> {
 		piRoot,
 		opencodeDb,
 		env: {
-			BLOTTER_HOME: blotterHome,
+			PACKBAT_HOME: packbatHome,
 			CLAUDE_CONFIG_DIR: claudeConfigDir,
 			CODEX_HOME: codexRoot,
 			GEMINI_CLI_HOME: geminiHome,
@@ -63,9 +63,9 @@ async function makeLayout(): Promise<TestLayout> {
 }
 
 async function writeConfig(layout: TestLayout, overrides: Record<string, unknown> = {}): Promise<void> {
-	await mkdir(layout.blotterHome, { recursive: true });
+	await mkdir(layout.packbatHome, { recursive: true });
 	await writeFile(
-		join(layout.blotterHome, "config.json"),
+		join(layout.packbatHome, "config.json"),
 		`${JSON.stringify({
 			version: 1,
 			machine: MACHINE,
@@ -89,7 +89,7 @@ afterEach(async () => {
 	await Promise.all(homes.splice(0).map((home) => rm(home, { recursive: true, force: true })));
 });
 
-describe("blotter sync", () => {
+describe("packbat sync", () => {
 	test("rejects arguments before reading config or creating archive state", async () => {
 		const layout = await makeLayout();
 		await writeConfig(layout);
@@ -99,7 +99,7 @@ describe("blotter sync", () => {
 
 		expect(result.code).toBe(1);
 		expect(result.stdout).toBe("");
-		expect(result.stderr).toBe("Usage: blotter sync\n");
+		expect(result.stderr).toBe("Usage: packbat sync\n");
 		await expect(stat(layout.archiveRoot)).rejects.toMatchObject({ code: "ENOENT" });
 	});
 
@@ -144,10 +144,10 @@ describe("blotter sync", () => {
 		for (const { harness, file } of expected) {
 			expect(firstIndex).toContain(`"path":"${join(harness, `${file.relPath}.zst`)}"`);
 		}
-		const lastRun = await readJson(join(layout.blotterHome, "state", "last-run.json"));
+		const lastRun = await readJson(join(layout.packbatHome, "state", "last-run.json"));
 		expect(lastRun).toMatchObject({ ok: true, archived: expected.length, unchanged: 0, failed: 0 });
-		expect(await readJson(join(layout.blotterHome, "state", "last-success.json"))).toEqual(lastRun);
-		expect(await readFile(join(layout.blotterHome, "logs", "blotter.log"), "utf8")).toContain(
+		expect(await readJson(join(layout.packbatHome, "state", "last-success.json"))).toEqual(lastRun);
+		expect(await readFile(join(layout.packbatHome, "logs", "packbat.log"), "utf8")).toContain(
 			`archived ${expected.length}`,
 		);
 
@@ -298,7 +298,7 @@ describe("blotter sync", () => {
 		for (const [path, mtimeMs] of storedMtimes) {
 			expect((await stat(path)).mtimeMs).toBe(mtimeMs);
 		}
-		expect(await readJson(join(layout.blotterHome, "state", "last-run.json"))).toMatchObject({
+		expect(await readJson(join(layout.packbatHome, "state", "last-run.json"))).toMatchObject({
 			repaired: expected.length,
 		});
 		const listed = await runCli(["restore"], { home: layout.home, env: layout.env });
@@ -356,7 +356,7 @@ describe("blotter sync", () => {
 	test("succeeds when harness roots are absent and rotates a full log", async () => {
 		const layout = await makeLayout();
 		await writeConfig(layout);
-		const logPath = join(layout.blotterHome, "logs", "blotter.log");
+		const logPath = join(layout.packbatHome, "logs", "packbat.log");
 		await mkdir(dirname(logPath), { recursive: true });
 		const oldLog = "x".repeat(1024 * 1024);
 		await writeFile(logPath, oldLog);
@@ -376,7 +376,7 @@ describe("blotter sync", () => {
 		const layout = await makeLayout();
 		await writeConfig(layout);
 		await makeCodexStore(layout.codexRoot, { mtimeMs: SOURCE_MTIME_MS });
-		const lockPath = join(layout.blotterHome, "state", "sync.lock");
+		const lockPath = join(layout.packbatHome, "state", "sync.lock");
 		await mkdir(dirname(lockPath), { recursive: true });
 		await writeFile(lockPath, `${JSON.stringify({ pid: process.pid, startedAt: new Date().toISOString() })}\n`);
 
@@ -392,7 +392,7 @@ describe("blotter sync", () => {
 		const layout = await makeLayout();
 		await writeConfig(layout);
 		const codex = await makeCodexStore(layout.codexRoot, { mtimeMs: SOURCE_MTIME_MS });
-		const lockPath = join(layout.blotterHome, "state", "sync.lock");
+		const lockPath = join(layout.packbatHome, "state", "sync.lock");
 		await mkdir(dirname(lockPath), { recursive: true });
 		await writeFile(lockPath, `${JSON.stringify({ pid: 99_999_999, startedAt: new Date().toISOString() })}\n`);
 
@@ -409,7 +409,7 @@ describe("blotter sync", () => {
 		const layout = await makeLayout();
 		await writeConfig(layout);
 		const codex = await makeCodexStore(layout.codexRoot, { mtimeMs: SOURCE_MTIME_MS });
-		const lockPath = join(layout.blotterHome, "state", "sync.lock");
+		const lockPath = join(layout.packbatHome, "state", "sync.lock");
 		await mkdir(dirname(lockPath), { recursive: true });
 		await writeFile(lockPath, "");
 
@@ -439,12 +439,12 @@ describe("blotter sync", () => {
 		expect(zstdDecompressSync(await readFile(storedPath(layout, "codex", codex.files[0]!)))).toEqual(
 			await readFile(codex.files[0]!.absPath),
 		);
-		expect(await readJson(join(layout.blotterHome, "state", "last-run.json"))).toMatchObject({
+		expect(await readJson(join(layout.packbatHome, "state", "last-run.json"))).toMatchObject({
 			ok: false,
 			archived: 1,
 			failed: 3,
 		});
-		await expect(stat(join(layout.blotterHome, "state", "last-success.json"))).rejects.toMatchObject({
+		await expect(stat(join(layout.packbatHome, "state", "last-success.json"))).rejects.toMatchObject({
 			code: "ENOENT",
 		});
 	});
@@ -459,21 +459,21 @@ describe("blotter sync", () => {
 		expect(result.code).toBe(1);
 		expect(result.stdout).toContain("archived 0, unchanged 0, failed 1");
 		expect(result.stderr).toContain("sweep:");
-		expect(await readJson(join(layout.blotterHome, "state", "last-run.json"))).toMatchObject({
+		expect(await readJson(join(layout.packbatHome, "state", "last-run.json"))).toMatchObject({
 			ok: false,
 			archived: 0,
 			unchanged: 0,
 			failed: 1,
 		});
-		expect(await readFile(join(layout.blotterHome, "logs", "blotter.log"), "utf8")).toContain("failed 1");
-		await expect(stat(join(layout.blotterHome, "state", "sync.lock"))).rejects.toMatchObject({ code: "ENOENT" });
+		expect(await readFile(join(layout.packbatHome, "logs", "packbat.log"), "utf8")).toContain("failed 1");
+		await expect(stat(join(layout.packbatHome, "state", "sync.lock"))).rejects.toMatchObject({ code: "ENOENT" });
 	});
 
 	test("reports missing and invalid config as operational errors", async () => {
 		const layout = await makeLayout();
 		const missing = await runCli(["sync"], { home: layout.home, env: layout.env });
 		expect(missing.code).toBe(1);
-		expect(missing.stderr).toContain("blotter init");
+		expect(missing.stderr).toContain("packbat init");
 
 		await writeConfig(layout, { machine: "NOT SAFE" });
 		const invalid = await runCli(["sync"], { home: layout.home, env: layout.env });

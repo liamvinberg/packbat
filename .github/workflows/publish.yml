@@ -1,0 +1,30 @@
+name: publish
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  publish:
+    if: github.repository == 'liamvinberg/packbat'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+          registry-url: https://registry.npmjs.org
+          package-manager-cache: false
+      - run: corepack enable
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm -C apps/cli typecheck
+      - run: pnpm -C apps/cli test
+      - run: pnpm check
+      - run: pnpm release:check
+      - run: npm publish
+        working-directory: apps/cli

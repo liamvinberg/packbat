@@ -5,7 +5,7 @@ import { assertFts5 } from "../retrieval/database.js";
 import { readShowUnit, resolveShowUnit, type ShowResult } from "../retrieval/show.js";
 
 // DRAFT copy. Usage is pinned byte-for-byte by the retrieval contract.
-const USAGE = "Usage: blotter show <unit-or-key> [--json]\n";
+const USAGE = "Usage: packbat show <unit-or-key> [--json]\n";
 
 function parseOptions(argv: string[]): { value: string; json: boolean } | null {
 	let value: string | null = null;
@@ -14,17 +14,17 @@ function parseOptions(argv: string[]): { value: string; json: boolean } | null {
 		if (argument === "--json") {
 			if (json) {
 				// DRAFT copy
-				process.stderr.write(`blotter show: --json may only be passed once\n\n${USAGE}`);
+				process.stderr.write(`packbat show: --json may only be passed once\n\n${USAGE}`);
 				return null;
 			}
 			json = true;
 		} else if (argument.startsWith("-")) {
 			// DRAFT copy
-			process.stderr.write(`blotter show: unknown option ${argument}\n\n${USAGE}`);
+			process.stderr.write(`packbat show: unknown option ${argument}\n\n${USAGE}`);
 			return null;
 		} else if (value !== null) {
 			// DRAFT copy
-			process.stderr.write(`blotter show: only one unit or key may be passed\n\n${USAGE}`);
+			process.stderr.write(`packbat show: only one unit or key may be passed\n\n${USAGE}`);
 			return null;
 		} else {
 			value = argument;
@@ -32,7 +32,7 @@ function parseOptions(argv: string[]): { value: string; json: boolean } | null {
 	}
 	if (value === null) {
 		// DRAFT copy
-		process.stderr.write(`blotter show: a unit or key is required\n\n${USAGE}`);
+		process.stderr.write(`packbat show: a unit or key is required\n\n${USAGE}`);
 		return null;
 	}
 	return { value, json };

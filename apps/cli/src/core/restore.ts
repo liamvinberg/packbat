@@ -5,8 +5,8 @@ import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "nod
 import type { HarnessId } from "../adapters/adapter.js";
 import { getAdapter } from "../adapters/registry.js";
 import { decompressBytes } from "./compress.js";
-import type { BlotterConfig } from "./config.js";
-import { BlotterError, errorMessage } from "./errors.js";
+import type { PackbatConfig } from "./config.js";
+import { errorMessage, PackbatError } from "./errors.js";
 import {
 	type ArchiveIndexRecord,
 	type DatabaseSnapshotIndexRecord,
@@ -45,11 +45,11 @@ interface RestorePlan {
 function recordRelPath(record: ArchiveIndexRecord): string {
 	const prefix = `${record.harness}${sep}`;
 	if (!record.path.startsWith(prefix) || !record.path.endsWith(".zst")) {
-		throw new BlotterError(`invalid archive path in index: ${record.path}`);
+		throw new PackbatError(`invalid archive path in index: ${record.path}`);
 	}
 	const relPath = record.path.slice(prefix.length, -".zst".length);
 	if (relPath === "" || isAbsolute(relPath)) {
-		throw new BlotterError(`invalid archive path in index: ${record.path}`);
+		throw new PackbatError(`invalid archive path in index: ${record.path}`);
 	}
 	return relPath;
 }
@@ -57,7 +57,7 @@ function recordRelPath(record: ArchiveIndexRecord): string {
 function assertContained(root: string, path: string, label: string): void {
 	const fromRoot = relative(resolve(root), resolve(path));
 	if (fromRoot === "" || fromRoot === ".." || fromRoot.startsWith(`..${sep}`) || isAbsolute(fromRoot)) {
-		throw new BlotterError(`${label} escapes its root: ${path}`);
+		throw new PackbatError(`${label} escapes its root: ${path}`);
 	}
 }
 
@@ -100,7 +100,7 @@ function selectCodexState(records: ArchiveIndexRecord[]): {
 }
 
 function toArchivedUnit(
-	config: BlotterConfig,
+	config: PackbatConfig,
 	machine: string,
 	harness: HarnessId,
 	id: string,
@@ -134,7 +134,7 @@ function toArchivedUnit(
 }
 
 function toArchivedSnapshotUnit(
-	config: BlotterConfig,
+	config: PackbatConfig,
 	machine: string,
 	id: string,
 	record: DatabaseSnapshotIndexRecord,
@@ -186,14 +186,14 @@ function attachGeminiProjectMarkers(
 	}
 }
 
-export async function readArchivedUnits(config: BlotterConfig, machine: string): Promise<ArchivedUnit[]> {
+export async function readArchivedUnits(config: PackbatConfig, machine: string): Promise<ArchivedUnit[]> {
 	let records: ArchiveIndexRecord[];
 	try {
 		records = [...(await readDerivedIndex(join(config.archiveRoot, machine), machine)).records.values()].filter(
 			(record) => record.machine === machine,
 		);
 	} catch (error) {
-		throw new BlotterError(`could not read archive index for ${machine}: ${errorMessage(error)}`);
+		throw new PackbatError(`could not read archive index for ${machine}: ${errorMessage(error)}`);
 	}
 	const groups = new Map<string, { harness: HarnessId; id: string; records: ArchiveIndexRecord[] }>();
 	for (const record of records.filter((record) => !isDatabaseSnapshotIndexRecord(record))) {
@@ -232,17 +232,17 @@ export function resolveArchivedUnit(units: readonly ArchivedUnit[], prefix: stri
 		(left, right) => left.localeCompare(right),
 	);
 	if (matchingIds.length === 0) {
-		throw new BlotterError(`no archived unit matches "${prefix}"`);
+		throw new PackbatError(`no archived unit matches "${prefix}"`);
 	}
 	if (matchingIds.length > 1) {
-		throw new BlotterError(
+		throw new PackbatError(
 			`archive prefix "${prefix}" is ambiguous:\n${matchingIds.map((id) => `  ${id}`).join("\n")}`,
 		);
 	}
 	const id = matchingIds[0]!;
 	const matches = units.filter((unit) => unit.id === id);
 	if (matches.length !== 1) {
-		throw new BlotterError(
+		throw new PackbatError(
 			`archive id "${id}" exists in multiple harnesses:\n${matches
 				.map((unit) => `  ${unit.id} (${unit.harness})`)
 				.join("\n")}`,
@@ -258,7 +258,7 @@ async function liveMtime(path: string): Promise<number | null> {
 		if ((error as NodeJS.ErrnoException).code === "ENOENT") {
 			return null;
 		}
-		throw new BlotterError(`could not inspect live target ${path}: ${errorMessage(error)}`);
+		throw new PackbatError(`could not inspect live target ${path}: ${errorMessage(error)}`);
 	}
 }
 
@@ -267,17 +267,17 @@ async function writeRestoredFile(plan: RestorePlan): Promise<void> {
 	try {
 		archivedBytes = await readFile(plan.file.archivePath);
 	} catch (error) {
-		throw new BlotterError(`could not read archived file ${plan.file.archivePath}: ${errorMessage(error)}`);
+		throw new PackbatError(`could not read archived file ${plan.file.archivePath}: ${errorMessage(error)}`);
 	}
 	const actualSha256 = createHash("sha256").update(archivedBytes).digest("hex");
 	if (actualSha256 !== plan.file.record.sha256) {
-		throw new BlotterError(`archived file is corrupt: ${plan.file.archivePath} (sha256 mismatch)`);
+		throw new PackbatError(`archived file is corrupt: ${plan.file.archivePath} (sha256 mismatch)`);
 	}
 	let bytes: Buffer;
 	try {
 		bytes = decompressBytes(archivedBytes);
 	} catch (error) {
-		throw new BlotterError(`could not read archived file ${plan.file.archivePath}: ${errorMessage(error)}`);
+		throw new PackbatError(`could not read archived file ${plan.file.archivePath}: ${errorMessage(error)}`);
 	}
 	await mkdir(dirname(plan.target), { recursive: true });
 	const temporary = join(dirname(plan.target), `.${basename(plan.target)}.tmp-${process.pid}-${randomUUID()}`);
@@ -288,7 +288,7 @@ async function writeRestoredFile(plan: RestorePlan): Promise<void> {
 		await utimes(plan.target, mtimeSeconds, mtimeSeconds);
 	} catch (error) {
 		await rm(temporary, { force: true });
-		throw new BlotterError(`could not restore ${plan.target}: ${errorMessage(error)}`);
+		throw new PackbatError(`could not restore ${plan.target}: ${errorMessage(error)}`);
 	}
 }
 
@@ -297,16 +297,16 @@ async function archivedPayload(file: ArchivedFile): Promise<Buffer> {
 	try {
 		archivedBytes = await readFile(file.archivePath);
 	} catch (error) {
-		throw new BlotterError(`could not read archived file ${file.archivePath}: ${errorMessage(error)}`);
+		throw new PackbatError(`could not read archived file ${file.archivePath}: ${errorMessage(error)}`);
 	}
 	const actualSha256 = createHash("sha256").update(archivedBytes).digest("hex");
 	if (actualSha256 !== file.record.sha256) {
-		throw new BlotterError(`archived file is corrupt: ${file.archivePath} (sha256 mismatch)`);
+		throw new PackbatError(`archived file is corrupt: ${file.archivePath} (sha256 mismatch)`);
 	}
 	try {
 		return decompressBytes(archivedBytes);
 	} catch (error) {
-		throw new BlotterError(`could not read archived file ${file.archivePath}: ${errorMessage(error)}`);
+		throw new PackbatError(`could not read archived file ${file.archivePath}: ${errorMessage(error)}`);
 	}
 }
 
@@ -319,26 +319,26 @@ async function restoreDatabaseSnapshot(unit: ArchivedUnit): Promise<RestoreResul
 	const adapter = getAdapter(unit.harness);
 	if (adapter === undefined || adapter.mutationModel !== "db-snapshot") {
 		// DRAFT copy
-		throw new BlotterError(`archive uses unsupported database snapshot harness ${unit.harness}`);
+		throw new PackbatError(`archive uses unsupported database snapshot harness ${unit.harness}`);
 	}
 	const target = adapter.storeRoot(process.env, homedir());
 	if ((await liveMtime(target)) !== null) {
 		const recoveryPath = sideBySidePath(target, unit.id);
 		// DRAFT copy
-		throw new BlotterError(
+		throw new PackbatError(
 			`restore requires an absent OpenCode database: ${target}\nside-by-side recovery: OPENCODE_DB=${recoveryPath} opencode -s ${unit.id}`,
 		);
 	}
 	const file = unit.files[0];
 	if (file === undefined || unit.files.length !== 1 || !isDatabaseSnapshotIndexRecord(file.record)) {
 		// DRAFT copy
-		throw new BlotterError(`invalid database snapshot archive for ${unit.id}`);
+		throw new PackbatError(`invalid database snapshot archive for ${unit.id}`);
 	}
 	const bytes = await archivedPayload(file);
 	const contentSha256 = createHash("sha256").update(bytes).digest("hex");
 	if (contentSha256 !== file.record.contentSha256) {
 		// DRAFT copy
-		throw new BlotterError(`archived database is corrupt: ${file.archivePath} (content sha256 mismatch)`);
+		throw new PackbatError(`archived database is corrupt: ${file.archivePath} (content sha256 mismatch)`);
 	}
 	await mkdir(dirname(target), { recursive: true });
 	const temporary = join(dirname(target), `.${basename(target)}.tmp-${process.pid}-${randomUUID()}`);
@@ -348,7 +348,7 @@ async function restoreDatabaseSnapshot(unit: ArchivedUnit): Promise<RestoreResul
 		if ((await liveMtime(target)) !== null) {
 			const recoveryPath = sideBySidePath(target, unit.id);
 			// DRAFT copy
-			throw new BlotterError(
+			throw new PackbatError(
 				`restore requires an absent OpenCode database: ${target}\nside-by-side recovery: OPENCODE_DB=${recoveryPath} opencode -s ${unit.id}`,
 			);
 		}
@@ -356,10 +356,10 @@ async function restoreDatabaseSnapshot(unit: ArchivedUnit): Promise<RestoreResul
 		await rename(temporary, target);
 	} catch (error) {
 		await rm(temporary, { force: true });
-		if (error instanceof BlotterError) {
+		if (error instanceof PackbatError) {
 			throw error;
 		}
-		throw new BlotterError(`could not restore ${target}: ${errorMessage(error)}`);
+		throw new PackbatError(`could not restore ${target}: ${errorMessage(error)}`);
 	}
 	return {
 		fileCount: 1,
@@ -374,7 +374,7 @@ export async function restoreArchivedUnit(unit: ArchivedUnit, force: boolean): P
 	}
 	const adapter = getAdapter(unit.harness);
 	if (adapter === undefined || adapter.mutationModel === "db-snapshot") {
-		throw new BlotterError(`archive uses unsupported harness ${unit.harness}`);
+		throw new PackbatError(`archive uses unsupported harness ${unit.harness}`);
 	}
 	const targetRoot = adapter.storeRoot(process.env, homedir());
 	const plans = unit.files.map((file): RestorePlan => {
@@ -385,7 +385,7 @@ export async function restoreArchivedUnit(unit: ArchivedUnit, force: boolean): P
 	const targets = new Set<string>();
 	for (const plan of plans) {
 		if (targets.has(plan.target)) {
-			throw new BlotterError(`archive maps more than one file to ${plan.target}`);
+			throw new PackbatError(`archive maps more than one file to ${plan.target}`);
 		}
 		targets.add(plan.target);
 	}
@@ -398,7 +398,7 @@ export async function restoreArchivedUnit(unit: ArchivedUnit, force: boolean): P
 		}
 	}
 	if (!force && offenders.length > 0) {
-		throw new BlotterError(
+		throw new PackbatError(
 			`restore would overwrite newer live files:\n${offenders.map((path) => `  ${path}`).join("\n")}`,
 		);
 	}

@@ -7,10 +7,10 @@ import { join } from "node:path";
 import * as zlib from "node:zlib";
 import type { HarnessId } from "../adapters/adapter.js";
 import { adapters, unsupportedStores } from "../adapters/registry.js";
-import { type BlotterConfig, type RemoteConfig, remoteStatePath } from "../core/config.js";
+import { type PackbatConfig, type RemoteConfig, remoteStatePath } from "../core/config.js";
 import { commandOnPath } from "../core/exec.js";
 import { isEnoent, pathExists } from "../core/fs.js";
-import type { BlotterHome } from "../core/home.js";
+import type { PackbatHome } from "../core/home.js";
 import { readDerivedIndex } from "../core/index.js";
 import type { RunStamp } from "../core/stamps.js";
 import { CRON_MARKER, generateCronEntry } from "../schedule/cron.js";
@@ -18,8 +18,8 @@ import { generateLaunchdPlist, LAUNCHD_LABEL } from "../schedule/launchd.js";
 import { generateSystemdService, generateSystemdTimer } from "../schedule/systemd.js";
 
 const MINIMUM_FREE_BYTES = 500 * 1024 * 1024;
-const SYSTEMD_SERVICE = "blotter-sync.service";
-const SYSTEMD_TIMER = "blotter-sync.timer";
+const SYSTEMD_SERVICE = "packbat-sync.service";
+const SYSTEMD_TIMER = "packbat-sync.timer";
 
 export interface Fact {
 	id: string;
@@ -30,8 +30,8 @@ export interface Fact {
 }
 
 export interface DoctorContext {
-	config: BlotterConfig;
-	home: BlotterHome;
+	config: PackbatConfig;
+	home: PackbatHome;
 	userHome: string;
 	env: NodeJS.ProcessEnv;
 	now: Date;
@@ -80,8 +80,8 @@ function fact(id: string, status: Fact["status"], detail: string, data?: unknown
 }
 
 export function createDoctorContext(
-	config: BlotterConfig,
-	home: BlotterHome,
+	config: PackbatConfig,
+	home: PackbatHome,
 	env: NodeJS.ProcessEnv = process.env,
 	now: Date = new Date(),
 ): DoctorContext {
@@ -261,7 +261,7 @@ async function checkLaunchdInstalled(context: DoctorContext): Promise<InstalledC
 	const args = launchdArguments(contents);
 	const environment = launchdEnvironment(contents);
 	if (args === null || environment === null || args.length !== 3 || args[2] !== "sync") {
-		return { fact: fact("installed", "problem", "launchd artifact does not match blotter's schedule"), schedule: null };
+		return { fact: fact("installed", "problem", "launchd artifact does not match Packbat's schedule"), schedule: null };
 	}
 	const nodePath = args[0] ?? "";
 	const entryPath = args[1] ?? "";
@@ -274,7 +274,7 @@ async function checkLaunchdInstalled(context: DoctorContext): Promise<InstalledC
 	const schedule: InstalledSchedule = { kind: "launchd", artifactPaths: [artifactPath], nodePath, entryPath };
 	if (contents !== expected) {
 		return {
-			fact: fact("installed", "problem", "launchd artifact does not match blotter's schedule", installedData(schedule)),
+			fact: fact("installed", "problem", "launchd artifact does not match Packbat's schedule", installedData(schedule)),
 			schedule,
 		};
 	}
@@ -308,7 +308,7 @@ async function checkSystemdInstalled(context: DoctorContext): Promise<InstalledC
 	const args = systemdArguments(service);
 	const environment = systemdEnvironment(service);
 	if (args === null || environment === null || args[2] !== "sync") {
-		return { fact: fact("installed", "problem", "systemd artifacts do not match blotter's schedule"), schedule: null };
+		return { fact: fact("installed", "problem", "systemd artifacts do not match Packbat's schedule"), schedule: null };
 	}
 	const nodePath = args[0] ?? "";
 	const entryPath = args[1] ?? "";
@@ -325,7 +325,7 @@ async function checkSystemdInstalled(context: DoctorContext): Promise<InstalledC
 	});
 	if (service !== expectedService || timer !== generateSystemdTimer()) {
 		return {
-			fact: fact("installed", "problem", "systemd artifacts do not match blotter's schedule", installedData(schedule)),
+			fact: fact("installed", "problem", "systemd artifacts do not match Packbat's schedule", installedData(schedule)),
 			schedule,
 		};
 	}
@@ -349,7 +349,7 @@ async function checkCronInstalled(context: DoctorContext): Promise<InstalledChec
 	}
 	const args = cronArguments(contents);
 	if (args === null) {
-		return { fact: fact("installed", "problem", "cron artifact does not match blotter's schedule"), schedule: null };
+		return { fact: fact("installed", "problem", "cron artifact does not match Packbat's schedule"), schedule: null };
 	}
 	const schedule: InstalledSchedule = {
 		kind: "cron",
@@ -364,7 +364,7 @@ async function checkCronInstalled(context: DoctorContext): Promise<InstalledChec
 	})}\n`;
 	if (contents !== expected) {
 		return {
-			fact: fact("installed", "problem", "cron artifact does not match blotter's schedule", installedData(schedule)),
+			fact: fact("installed", "problem", "cron artifact does not match Packbat's schedule", installedData(schedule)),
 			schedule,
 		};
 	}
@@ -479,12 +479,12 @@ async function checkSystemdLive(context: DoctorContext): Promise<Fact> {
 async function checkCronLive(context: DoctorContext): Promise<Fact> {
 	const result = await command("crontab", ["-l"], context.env);
 	if (!result.ok) {
-		return fact("live", "problem", "blotter marker is absent from crontab");
+		return fact("live", "problem", "Packbat marker is absent from crontab");
 	}
 	const present = result.stdout.split("\n").some((line) => line.trimEnd().endsWith(CRON_MARKER));
 	return present
 		? fact("live", "info", "cron marker is present; cron cannot prove execution")
-		: fact("live", "problem", "blotter marker is absent from crontab");
+		: fact("live", "problem", "Packbat marker is absent from crontab");
 }
 
 export async function checkLive(
@@ -493,7 +493,7 @@ export async function checkLive(
 	options: { probe: boolean } = { probe: true },
 ): Promise<Fact> {
 	if (!options.probe) {
-		return fact("live", "info", "live state not checked; run `blotter doctor`");
+		return fact("live", "info", "live state not checked; run `packbat doctor`");
 	}
 	if (installed.schedule === null) {
 		return fact("live", "problem", "schedule state cannot be checked until it is installed");
@@ -668,10 +668,10 @@ async function storeReadabilityFact(context: DoctorContext): Promise<Fact> {
 }
 
 async function archiveWritableFact(context: DoctorContext): Promise<Fact> {
-	const probePath = join(context.config.archiveRoot, `.blotter-doctor-${process.pid}-${randomUUID()}`);
+	const probePath = join(context.config.archiveRoot, `.packbat-doctor-${process.pid}-${randomUUID()}`);
 	try {
 		await mkdir(context.config.archiveRoot, { recursive: true });
-		await writeFile(probePath, "blotter doctor\n");
+		await writeFile(probePath, "packbat doctor\n");
 		await rm(probePath);
 		return fact("archive-writable", "ok", `writable: ${context.config.archiveRoot}`);
 	} catch (error) {
@@ -706,7 +706,7 @@ function compressionFact(): Fact {
 		if (typeof zlib.zstdCompressSync !== "function" || typeof zlib.zstdDecompressSync !== "function") {
 			throw new Error("zstd is unavailable");
 		}
-		const source = Buffer.from("blotter compression smoke\n", "utf8");
+		const source = Buffer.from("packbat compression smoke\n", "utf8");
 		const restored = zlib.zstdDecompressSync(zlib.zstdCompressSync(source));
 		if (!restored.equals(source)) {
 			throw new Error("round-trip mismatch");
@@ -788,16 +788,16 @@ export async function readHarnessTallies(context: DoctorContext): Promise<Harnes
 
 export function remedyForFact(item: Fact): string {
 	if (item.id === "installed") {
-		return "re-run `blotter init`";
+		return "re-run `packbat init`";
 	}
 	if (item.id === "live") {
-		return "re-run `blotter init` and inspect the scheduler";
+		return "re-run `packbat init` and inspect the scheduler";
 	}
 	if (item.id === "fresh") {
-		return "run `blotter sync` and inspect the log; Claude Code's 30-day cleanup keeps running while sweeps fail";
+		return "run `packbat sync` and inspect the log; Claude Code's 30-day cleanup keeps running while sweeps fail";
 	}
 	if (item.id === "reconciled") {
-		return "run `blotter sync`";
+		return "run `packbat sync`";
 	}
 	if (item.id === "stores-readable") {
 		return "fix read access to the listed store roots";

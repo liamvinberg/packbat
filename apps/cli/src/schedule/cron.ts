@@ -1,6 +1,6 @@
 import type { ScheduleEnvironment } from "./environment.js";
 
-export const CRON_MARKER = "# blotter-sync";
+export const CRON_MARKER = "# packbat-sync";
 
 export interface CronArtifactOptions {
 	nodePath: string;
@@ -12,7 +12,7 @@ function shellQuote(value: string): string {
 	return `'${value.replaceAll("'", `'"'"'`).replaceAll("%", "\\%")}'`;
 }
 
-function isBlotterEntry(line: string): boolean {
+function isPackbatEntry(line: string): boolean {
 	return line.trimEnd().endsWith(CRON_MARKER);
 }
 
@@ -27,7 +27,7 @@ export function stripCronEntry(contents: string): string {
 	if (hadTrailingNewline) {
 		lines.pop();
 	}
-	const foreignLines = lines.filter((line) => !isBlotterEntry(line));
+	const foreignLines = lines.filter((line) => !isPackbatEntry(line));
 	if (foreignLines.length === 0) {
 		return "";
 	}

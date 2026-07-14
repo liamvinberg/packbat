@@ -1,9 +1,9 @@
-# Blotter Cloud architecture
+# Packbat Cloud architecture
 
 Checked 2026-07-14. This resolves the architecture spike in
-[#25](https://github.com/liamvinberg/blotter/issues/25) under the decisions already fixed in
-[#15](https://github.com/liamvinberg/blotter/issues/15): Blotter Cloud is optional, E2E-only, and stores
-ciphertext only. The age identity never reaches Blotter. User-owned storage stays the default init lane,
+[#25](https://github.com/liamvinberg/packbat/issues/25) under the decisions already fixed in
+[#15](https://github.com/liamvinberg/packbat/issues/15): Packbat Cloud is optional, E2E-only, and stores
+ciphertext only. The age identity never reaches Packbat. User-owned storage stays the default init lane,
 and plaintext hosting is permanently out of scope.
 
 ## Verdict
@@ -11,8 +11,8 @@ and plaintext hosting is permanently out of scope.
 | Area | Decision |
 | --- | --- |
 | Service | Static dashboard plus one small API, D1, and R2 Standard. GitHub supplies browser and device-flow identity. |
-| Account | Opaque Blotter user ID linked to a GitHub numeric user ID. No email, password, profile, or GitHub token retained. |
-| CLI auth | GitHub's RFC 8628 device flow with no requested OAuth scope, followed by a one-time exchange for Blotter tokens. |
+| Account | Opaque Packbat user ID linked to a GitHub numeric user ID. No email, password, profile, or GitHub token retained. |
+| CLI auth | GitHub's RFC 8628 device flow with no requested OAuth scope, followed by a one-time exchange for Packbat tokens. |
 | Upload | Exact-object, short-lived presigned-URL broker behind a Cloud remote adapter. Rclone remains for user-owned remotes. |
 | Read | Decrypt each machine's small `index.jsonl.age` first, then fetch and stream one selected session object. |
 | Browser key v1 | Choose the existing recovery-kit file locally, with pasted identity as fallback. Keep the identity in page memory only. |
@@ -29,7 +29,7 @@ unwrapped key the next time the user unlocks it.
 ### Minimal stack
 
 1. A static browser dashboard served on the long-lived production origin.
-2. A small API on Cloudflare Workers for Blotter sessions, token exchange, machine registration, quotas, upload
+2. A small API on Cloudflare Workers for Packbat sessions, token exchange, machine registration, quotas, upload
    reservations, and presigning.
 3. D1 for the small relational control plane.
 4. One private R2 Standard bucket for ciphertext.
@@ -49,7 +49,7 @@ object-store transfer is the large-object path. See
 
 ### Account and device link
 
-Use GitHub as the v1 identity provider. Blotter's first users already live in developer CLIs, and GitHub implements
+Use GitHub as the v1 identity provider. Packbat's first users already live in developer CLIs, and GitHub implements
 the RFC 8628 interaction directly: the CLI receives `device_code`, `user_code`, `verification_uri`, `expires_in`,
 and `interval`, shows the eight-character code, and polls until approval, denial, or expiry. A device client must
 respect `authorization_pending`, permanently add five seconds after `slow_down`, and back off on network timeouts.
@@ -59,23 +59,23 @@ Those are protocol requirements, not optional retry polish. See
 
 Flow:
 
-1. `blotter init` offers Blotter Cloud only after the default user-owned-storage lane.
+1. `packbat init` offers Packbat Cloud only after the default user-owned-storage lane.
 2. On an explicit Cloud choice, the CLI asks GitHub for a device code with the public app client ID and no scope.
    GitHub documents that a CLI does not need to request a scope for authentication. The client secret is not used
    in device flow. See [GitHub OAuth scopes](https://docs.github.com/en/apps/oauth-apps/building-oauth-apps/scopes-for-oauth-apps)
    and [GitHub device-flow errors](https://docs.github.com/en/apps/oauth-apps/building-oauth-apps/authorizing-oauth-apps#error-codes-for-the-device-flow).
 3. The user approves at `github.com/login/device`. The CLI receives a GitHub access token, uses it only for the
-   Blotter exchange, and does not persist it afterwards.
-4. The API calls GitHub's authenticated-user endpoint, keys the account by the numeric GitHub ID, issues Blotter
+   Packbat exchange, and does not persist it afterwards.
+4. The API calls GitHub's authenticated-user endpoint, keys the account by the numeric GitHub ID, issues Packbat
    access and rotating refresh tokens, and immediately discards the GitHub token. It never asks for or stores an
    email. GitHub says to revalidate `/user` after every sign-in. See
    [GitHub's web flow](https://docs.github.com/en/apps/oauth-apps/building-oauth-apps/authorizing-oauth-apps#web-application-flow).
 5. The dashboard uses the same provider's normal browser flow with `state` and PKCE, then receives a secure,
-   HTTP-only Blotter session cookie. Existing Blotter credentials continue to work if GitHub is temporarily down;
+   HTTP-only Packbat session cookie. Existing Packbat credentials continue to work if GitHub is temporarily down;
    only new browser sign-ins and device links depend on GitHub.
 
 This delegates the low-entropy user-code store, rate limiting, polling, and approval UI to a mature RFC 8628
-implementation. If Blotter later needs non-GitHub users or a branded approval screen, it can own the RFC endpoints
+implementation. If Packbat later needs non-GitHub users or a branded approval screen, it can own the RFC endpoints
 then. That is not required for the developer-only v1.
 
 The device code is not an account. It is a short-lived grant linking one CLI to the account that approves it.
@@ -96,7 +96,7 @@ not identity; the numeric subject is the stable join key.
 
 ### Cloud is a managed remote
 
-[#18](https://github.com/liamvinberg/blotter/issues/18) should make the seam semantic, not rclone-shaped. Each remote
+[#18](https://github.com/liamvinberg/packbat/issues/18) should make the seam semantic, not rclone-shaped. Each remote
 needs logical operations such as `exists`, `put archive objects`, `put index`, `get index`, and `get archive object`.
 User-owned remotes implement those operations with rclone. Cloud implements them with its API and direct HTTP
 transfers.
@@ -141,7 +141,7 @@ matches the trust boundary here. See
 [R2 temporary credentials](https://developers.cloudflare.com/r2/api/s3/temporary-credentials/).
 
 Teach-back: rclone is the right abstraction when the user owns both the remote and the credential risk. In a shared
-managed bucket, Blotter owns tenant isolation and quota. A short-lived S3 credential says what a client may do for a
+managed bucket, Packbat owns tenant isolation and quota. A short-lived S3 credential says what a client may do for a
 period; a presigned URL says this one operation may touch this one object. The second is a smaller failure domain and
 puts admission exactly where the service can account for it.
 
@@ -241,7 +241,7 @@ pipeline before claiming multi-GB readiness.
 | Option | Security | Usability | Verdict |
 | --- | --- | --- | --- |
 | Paste identity | Works with current objects, but exposes the identity to clipboard history and makes formatting mistakes easy. | Lowest implementation cost; repeated manual action. | Fallback in v1. |
-| Choose recovery-kit file | Works with current objects and avoids the clipboard. A normal file input reads it locally without sending it to Blotter. | Reuses the artifact the user already safeguards. | **Default in v1.** |
+| Choose recovery-kit file | Works with current objects and avoids the clipboard. A normal file input reads it locally without sending it to Packbat. | Reuses the artifact the user already safeguards. | **Default in v1.** |
 | WebAuthn PRF | No extractable PRF secret, but origin-bound, experimental in typage, and every direct typage PRF encryption/decryption requires user verification. | Convenient after enrollment, with authenticator confirmation. | Later convenience unlock. |
 
 V1 copy must say that choosing the recovery kit does not upload it. Extract the identity in browser memory, clear the
@@ -275,7 +275,7 @@ canonical recovery route even after passkey enrollment; Cloud cannot reset an ag
 A compromise of the API database, R2 bucket, secrets, and configured logs yields:
 
 - Every encrypted session object and encrypted index.
-- Account state: GitHub numeric subject, opaque Blotter and storage IDs, plan/quota, hashed credentials, machine
+- Account state: GitHub numeric subject, opaque Packbat and storage IDs, plan/quota, hashed credentials, machine
   remote IDs, object ledger, and pending reservations.
 - Object keys, object count, exact ciphertext byte sizes, ETags/checksums, storage class, upload/last-modified times,
   and any HTTP or custom metadata. R2 exposes those fields on its object model. See the
@@ -290,7 +290,7 @@ remain visible. Ciphertext size closely tracks compressed plaintext size plus sm
 index timestamps reveal activity cadence.
 
 The snapshot does not contain the age identity, session plaintext, decrypted index fields, or exact uncompressed
-size. It cannot decrypt stored objects from Blotter data alone.
+size. It cannot decrypt stored objects from Packbat data alone.
 
 ### Active server compromise
 
@@ -349,8 +349,8 @@ Sources: [R2 pricing](https://developers.cloudflare.com/r2/pricing/),
 Some older Backblaze help pages still show superseded storage and transaction rates. Confirm the billable product
 terms before implementation; the table uses the current product and transaction pages linked above.
 
-The headline 10 GB allowances belong to Blotter's provider account. They are not granted again for every user in a
-shared bucket. A 10 GB free plan becomes Blotter's subsidy after the first aggregate 10 GB.
+The headline 10 GB allowances belong to Packbat's provider account. They are not granted again for every user in a
+shared bucket. A 10 GB free plan becomes Packbat's subsidy after the first aggregate 10 GB.
 
 B2 is the raw cost winner while a user downloads less than 3x their stored bytes. R2 is the v1 recommendation
 because unlimited egress removes an abuse and restore-cost dimension, presigned transfers and the control plane live
@@ -398,8 +398,8 @@ Status: **proposed for maintainer review**. This document does not edit `CLAUDE.
 ### Context
 
 The current invariant forbids any hosted service or account. Map #15 now fixes a narrower position: the core and
-user-owned remote require no account, while optional Blotter Cloud may exist only as a ciphertext store whose key
-never reaches Blotter. The dashboard performs read-time decryption on the user's client. Plaintext hosting and key
+user-owned remote require no account, while optional Packbat Cloud may exist only as a ciphertext store whose key
+never reaches Packbat. The dashboard performs read-time decryption on the user's client. Plaintext hosting and key
 escrow are not future options.
 
 ### Decision
@@ -407,15 +407,15 @@ escrow are not future options.
 Replace the current `CLAUDE.md` invariant bullet exactly with:
 
 > - **Local-first, no required account.** User-owned storage remains the default off-box lane. Every off-box copy is
->   encrypted before leaving the machine with a key only the user holds. Optional Blotter Cloud stores ciphertext
->   only and decrypts client-side; the key never reaches Blotter, plaintext hosting and key escrow are permanently
+>   encrypted before leaving the machine with a key only the user holds. Optional Packbat Cloud stores ciphertext
+>   only and decrypts client-side; the key never reaches Packbat, plaintext hosting and key escrow are permanently
 >   out of scope, and there is no telemetry.
 
 Apply the same wording to the mirrored project invariant in `AGENTS.md` during ADR review.
 
 Proposed bank decision-6 revision note:
 
-> **2026-07-14 revision:** Blotter Cloud is GO now, E2E-only. Blotter stores ciphertext only; the key never leaves
+> **2026-07-14 revision:** Packbat Cloud is GO now, E2E-only. Packbat stores ciphertext only; the key never leaves
 > the user; the dashboard decrypts client-side; user-owned storage remains the default init lane; plaintext hosting
 > and key escrow are permanently out of scope; there is no telemetry. This supersedes the 2026-07-12 demand-pull
 > timing gate. It does not revise the free/OSS core or make a Cloud account required. Pricing and monetization remain
@@ -423,7 +423,7 @@ Proposed bank decision-6 revision note:
 
 ### Consequences
 
-- Any feature that requires Blotter to receive an age identity or session plaintext is rejected by invariant, not
+- Any feature that requires Packbat to receive an age identity or session plaintext is rejected by invariant, not
   deferred.
 - Cloud auth, quota, and billing data must remain separate from archive contents and minimized to what operating the
   optional service requires.
@@ -436,15 +436,15 @@ Proposed bank decision-6 revision note:
 
 These are proposals for the maintainer to file. This spike does not create or edit GitHub issues.
 
-### Blotter Cloud: GitHub account and device-link service
+### Packbat Cloud: GitHub account and device-link service
 
 Implement the optional Cloud account boundary using GitHub's RFC 8628 device flow for the CLI and GitHub's browser
-OAuth flow with state and PKCE for the dashboard. Exchange the provider token once for Blotter access plus rotating
+OAuth flow with state and PKCE for the dashboard. Exchange the provider token once for Packbat access plus rotating
 refresh credentials, retain only the GitHub numeric subject and minimal account state, expose credential revocation
 and account deletion, and store no email, provider token, profile, archive recipient, or recovery material.
 Dependencies: #25 accepted, invariant ADR reviewed.
 
-### Blotter Cloud: R2 ciphertext broker and hard quota
+### Packbat Cloud: R2 ciphertext broker and hard quota
 
 Create the minimal Worker, D1 schema, and private R2 Standard bucket contract for opaque user/machine prefixes,
 object ledgers, atomic byte reservations, short-lived exact-object PUT/GET authority, checksum/size finalization,
@@ -452,7 +452,7 @@ conditional first index publication, and archive-first/index-last ordering. Firs
 or server-controlled multipart completion against real R2; the ticket is not done while an authenticated client can
 exceed its reserved quota. Dependencies: account/device-link service.
 
-### CLI: add Blotter Cloud as a managed remote
+### CLI: add Packbat Cloud as a managed remote
 
 Add Cloud as one entry on #18's remote list, authenticate through the device-link flow, and implement the Cloud
 adapter without exposing an age identity or R2 credential. Reuse local change detection, upload changed ciphertext
@@ -460,7 +460,7 @@ objects before the encrypted index, preserve the first-publish clobber guard, re
 status/doctor, and keep user-owned storage as the default wizard lane. Dependencies: #18, account/device-link
 service, R2 ciphertext broker.
 
-### Blotter Cloud: E2E dashboard v1
+### Packbat Cloud: E2E dashboard v1
 
 Build the authenticated ciphertext dashboard with recovery-kit file selection as the default unlock, pasted identity
 as fallback, small index-first decryption, lazy presigned session fetch, typage `ReadableStream` decryption,
@@ -469,14 +469,14 @@ never enter persistence, logs, errors, or requests. Include cross-browser and mu
 active-compromised-frontend limit in product copy. Dependencies: account/device-link service, R2 ciphertext broker,
 and #19 where its retrieval contract affects index presentation.
 
-### Blotter Cloud: plan enforcement, billing, and abuse controls
+### Packbat Cloud: plan enforcement, billing, and abuse controls
 
 Ship the 10 GB free entitlement, authoritative used/reserved-byte accounting, request and download abuse limits,
 reservation reconciliation, billing-provider IDs only for paid accounts, and cost/limit alerts without product
 telemetry. Pricing and paid-plan UX remain blocked on the maintainer's productization verdict; quota correctness and
 cost protection do not. Dependencies: R2 ciphertext broker; paid billing additionally depends on the pricing verdict.
 
-### Blotter Cloud: passkey-wrapped dashboard unlock
+### Packbat Cloud: passkey-wrapped dashboard unlock
 
 After dashboard v1, add optional typage WebAuthn PRF enrollment that encrypts one X25519 identity envelope and uses
 one authenticator confirmation per dashboard unlock. Keep the recovery kit canonical, feature-detect PRF support,

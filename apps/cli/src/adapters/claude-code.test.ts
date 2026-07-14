@@ -9,7 +9,7 @@ import { adapters, getAdapter, unsupportedStores } from "./registry.js";
 const roots: string[] = [];
 
 async function makeRoot(): Promise<string> {
-	const root = await mkdtemp(join(tmpdir(), "blotter-claude-adapter-"));
+	const root = await mkdtemp(join(tmpdir(), "packbat-claude-adapter-"));
 	roots.push(root);
 	return root;
 }

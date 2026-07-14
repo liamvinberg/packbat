@@ -18,7 +18,7 @@ const homes: string[] = [];
 
 interface Layout {
 	home: string;
-	blotterHome: string;
+	packbatHome: string;
 	archiveRoot: string;
 	claudeRoot: string;
 	remote: string;
@@ -28,16 +28,16 @@ interface Layout {
 async function makeLayout(): Promise<Layout> {
 	const home = await makeTempHome();
 	homes.push(home);
-	const blotterHome = join(home, "blotter");
+	const packbatHome = join(home, "packbat");
 	const claudeConfigDir = join(home, "stores", "claude");
 	return {
 		home,
-		blotterHome,
+		packbatHome,
 		archiveRoot: join(home, "archive"),
 		claudeRoot: join(claudeConfigDir, "projects"),
 		remote: join(home, "remote"),
 		env: {
-			BLOTTER_HOME: blotterHome,
+			PACKBAT_HOME: packbatHome,
 			CLAUDE_CONFIG_DIR: claudeConfigDir,
 			CODEX_HOME: join(home, "stores", "codex"),
 			PI_CODING_AGENT_SESSION_DIR: join(home, "stores", "pi"),
@@ -65,15 +65,15 @@ async function matchingLineCount(path: string, text: string): Promise<number> {
 	return (await readFile(path, "utf8")).split("\n").filter((line) => line.includes(text)).length;
 }
 
-function remoteStateDirectory(blotterHome: string, destination: string): string {
+function remoteStateDirectory(packbatHome: string, destination: string): string {
 	const id = createHash("sha256").update(`rclone\0${destination}`).digest("hex");
-	return join(blotterHome, "state", "offbox", id);
+	return join(packbatHome, "state", "offbox", id);
 }
 
 async function writeConfiguredConfig(layout: Layout, recipient: string, destinations: string[]): Promise<void> {
-	await mkdir(layout.blotterHome, { recursive: true });
+	await mkdir(layout.packbatHome, { recursive: true });
 	await writeFile(
-		join(layout.blotterHome, "config.json"),
+		join(layout.packbatHome, "config.json"),
 		`${JSON.stringify({
 			version: 2,
 			machine: "test-machine",
@@ -95,9 +95,9 @@ afterEach(async () => {
 describe("off-box configuration", () => {
 	test("rejects a configured v2 off-box without a remote", async () => {
 		const layout = await makeLayout();
-		await mkdir(layout.blotterHome, { recursive: true });
+		await mkdir(layout.packbatHome, { recursive: true });
 		await writeFile(
-			join(layout.blotterHome, "config.json"),
+			join(layout.packbatHome, "config.json"),
 			`${JSON.stringify({
 				version: 2,
 				machine: "test-machine",
@@ -118,11 +118,11 @@ describe("off-box configuration", () => {
 		const layout = await makeLayout();
 		await Promise.all([
 			mkdir(join(layout.archiveRoot, "legacy-machine"), { recursive: true }),
-			mkdir(join(layout.blotterHome, "state"), { recursive: true }),
+			mkdir(join(layout.packbatHome, "state"), { recursive: true }),
 		]);
 		await writeFile(join(layout.archiveRoot, "legacy-machine", "index.jsonl"), "");
 		await writeFile(
-			join(layout.blotterHome, "config.json"),
+			join(layout.packbatHome, "config.json"),
 			`${JSON.stringify({
 				version: 1,
 				machine: "legacy-machine",
@@ -131,20 +131,20 @@ describe("off-box configuration", () => {
 				offbox: {
 					mode: "configured",
 					recipient: "age1synthetic",
-					remote: { destination: "blotter:bucket/prefix", rcloneConfig: "managed" },
+					remote: { destination: "packbat:bucket/prefix", rcloneConfig: "managed" },
 				},
 			})}\n`,
 		);
-		await writeFile(join(layout.blotterHome, "state", "offbox-uploaded.jsonl"), "synthetic legacy state\n");
+		await writeFile(join(layout.packbatHome, "state", "offbox-uploaded.jsonl"), "synthetic legacy state\n");
 		await writeFile(
-			join(layout.blotterHome, "state", "offbox-last-success.json"),
+			join(layout.packbatHome, "state", "offbox-last-success.json"),
 			`${JSON.stringify({ finishedAt: "2026-07-13T10:11:12.000Z", uploaded: 1, bytes: 123 })}\n`,
 		);
 
 		const result = await runCli(["restore"], { home: layout.home, env: layout.env });
 
 		expect(result.code).toBe(0);
-		const config = JSON.parse(await readFile(join(layout.blotterHome, "config.json"), "utf8")) as Record<
+		const config = JSON.parse(await readFile(join(layout.packbatHome, "config.json"), "utf8")) as Record<
 			string,
 			unknown
 		>;
@@ -152,10 +152,10 @@ describe("off-box configuration", () => {
 			version: 2,
 			offbox: {
 				mode: "configured",
-				remotes: [{ type: "rclone", destination: "blotter:bucket/prefix", rcloneConfig: "managed" }],
+				remotes: [{ type: "rclone", destination: "packbat:bucket/prefix", rcloneConfig: "managed" }],
 			},
 		});
-		const stateFiles = await listFiles(join(layout.blotterHome, "state"));
+		const stateFiles = await listFiles(join(layout.packbatHome, "state"));
 		expect(stateFiles).not.toContain("offbox-uploaded.jsonl");
 		expect(stateFiles).not.toContain("offbox-last-success.json");
 		expect(stateFiles.filter((path) => path.endsWith("/uploaded.jsonl"))).toHaveLength(1);
@@ -203,7 +203,7 @@ describe("off-box configuration", () => {
 
 			const result = await runCli(["sync"], {
 				home: layout.home,
-				env: { ...layout.env, BLOTTER_HOME: layout.home, PATH: "" },
+				env: { ...layout.env, PACKBAT_HOME: layout.home, PATH: "" },
 			});
 
 			expect(result.code).toBe(1);
@@ -216,7 +216,7 @@ describe("off-box configuration", () => {
 			>;
 			expect(stamp).toMatchObject({ ok: true, archived: 1, offbox: expect.stringContaining("rclone") });
 			expect(JSON.parse(await readFile(join(layout.home, "state", "last-success.json"), "utf8"))).toEqual(stamp);
-			expect(await readFile(join(layout.home, "logs", "blotter.log"), "utf8")).toContain("off-box failed");
+			expect(await readFile(join(layout.home, "logs", "packbat.log"), "utf8")).toContain("off-box failed");
 			expect((await listFiles(join(layout.home, "state"))).some((path) => path.endsWith(".age"))).toBe(true);
 		},
 	);
@@ -234,13 +234,13 @@ describe("off-box configuration", () => {
 			})}\n`,
 		);
 
-		const first = await runCli(["sync"], { home: layout.home, env: { ...layout.env, BLOTTER_HOME: layout.home } });
-		const second = await runCli(["sync"], { home: layout.home, env: { ...layout.env, BLOTTER_HOME: layout.home } });
+		const first = await runCli(["sync"], { home: layout.home, env: { ...layout.env, PACKBAT_HOME: layout.home } });
+		const second = await runCli(["sync"], { home: layout.home, env: { ...layout.env, PACKBAT_HOME: layout.home } });
 
 		const risk = "If this laptop dies, sessions not copied off-box die with it.";
 		expect(first.stdout).not.toContain(risk);
 		expect(second.stdout).not.toContain(risk);
-		expect(await matchingLineCount(join(layout.home, "logs", "blotter.log"), risk)).toBe(1);
+		expect(await matchingLineCount(join(layout.home, "logs", "packbat.log"), risk)).toBe(1);
 		expect(JSON.parse(await readFile(join(layout.home, "state", "offbox-reminder.json"), "utf8"))).toMatchObject({
 			remindedAt: expect.any(String),
 		});
@@ -375,28 +375,28 @@ describe.skipIf(!hasRclone)("off-box archive cycle", () => {
 					remote: { destination: first.remote, rcloneConfig: "default" },
 				},
 			});
-		await Promise.all([mkdir(first.blotterHome, { recursive: true }), mkdir(second.blotterHome, { recursive: true })]);
-		await writeFile(join(first.blotterHome, "config.json"), `${configured(first, "shared-machine")}\n`);
+		await Promise.all([mkdir(first.packbatHome, { recursive: true }), mkdir(second.packbatHome, { recursive: true })]);
+		await writeFile(join(first.packbatHome, "config.json"), `${configured(first, "shared-machine")}\n`);
 		expect((await runCli(["sync"], { home: first.home, env: first.env })).code).toBe(0);
 		const remoteIndexPath = join(first.remote, "shared-machine", "index.jsonl.age");
 		const originalRemoteIndex = await readFile(remoteIndexPath);
 
-		await writeFile(join(second.blotterHome, "config.json"), `${configured(second, "shared-machine")}\n`);
+		await writeFile(join(second.packbatHome, "config.json"), `${configured(second, "shared-machine")}\n`);
 		const refused = await runCli(["sync"], { home: second.home, env: second.env });
 
 		expect(refused.code).toBe(1);
 		expect(refused.stderr).toContain(
-			"an archive for machine `shared-machine` already exists at the remote; restore it first (`blotter restore --from-remote --identity <kit-file>`) or change `machine` in config.json.",
+			"an archive for machine `shared-machine` already exists at the remote; restore it first (`packbat restore --from-remote --identity <kit-file>`) or change `machine` in config.json.",
 		);
 		expect(await readFile(remoteIndexPath)).toEqual(originalRemoteIndex);
 
-		await writeFile(join(second.blotterHome, "config.json"), `${configured(second, "second-machine")}\n`);
+		await writeFile(join(second.packbatHome, "config.json"), `${configured(second, "second-machine")}\n`);
 		const separated = await runCli(["sync"], { home: second.home, env: second.env });
 		expect(separated.code).toBe(0);
 		expect(await stat(join(first.remote, "second-machine", "index.jsonl.age"))).toBeDefined();
 	});
 
-	test("touches and uses the blotter-owned config in managed mode", async () => {
+	test("touches and uses the packbat-owned config in managed mode", async () => {
 		const layout = await makeLayout();
 		const identity = await generateIdentity();
 		const recipient = await identityToRecipient(identity);
@@ -421,10 +421,10 @@ describe.skipIf(!hasRclone)("off-box archive cycle", () => {
 		);
 
 		expect(initialized.code).toBe(0);
-		const managedConfigPath = join(layout.blotterHome, "rclone.conf");
+		const managedConfigPath = join(layout.packbatHome, "rclone.conf");
 		expect(await readFile(managedConfigPath, "utf8")).toBe("");
 		expect((await stat(managedConfigPath)).mode & 0o777).toBe(0o600);
-		const config = JSON.parse(await readFile(join(layout.blotterHome, "config.json"), "utf8")) as {
+		const config = JSON.parse(await readFile(join(layout.packbatHome, "config.json"), "utf8")) as {
 			machine: string;
 		};
 		const index = await decryptWithIdentity(
@@ -464,7 +464,7 @@ describe.skipIf(!hasRclone)("off-box archive cycle", () => {
 		).toBe(0);
 		expect(
 			JSON.parse(
-				await readFile(join(remoteStateDirectory(layout.blotterHome, layout.remote), "last-success.json"), "utf8"),
+				await readFile(join(remoteStateDirectory(layout.packbatHome, layout.remote), "last-success.json"), "utf8"),
 			),
 		).toMatchObject({ uploaded: 1 });
 		const secondRemote = join(layout.home, "second-remote");
@@ -473,7 +473,7 @@ describe.skipIf(!hasRclone)("off-box archive cycle", () => {
 		).toBe(0);
 		expect(
 			JSON.parse(
-				await readFile(join(remoteStateDirectory(layout.blotterHome, secondRemote), "last-success.json"), "utf8"),
+				await readFile(join(remoteStateDirectory(layout.packbatHome, secondRemote), "last-success.json"), "utf8"),
 			),
 		).toMatchObject({ uploaded: 1 });
 
@@ -484,10 +484,10 @@ describe.skipIf(!hasRclone)("off-box archive cycle", () => {
 		).toBe(0);
 		expect(
 			JSON.parse(
-				await readFile(join(remoteStateDirectory(layout.blotterHome, secondRemote), "last-success.json"), "utf8"),
+				await readFile(join(remoteStateDirectory(layout.packbatHome, secondRemote), "last-success.json"), "utf8"),
 			),
 		).toMatchObject({ uploaded: 1 });
-		const config = JSON.parse(await readFile(join(layout.blotterHome, "config.json"), "utf8")) as {
+		const config = JSON.parse(await readFile(join(layout.packbatHome, "config.json"), "utf8")) as {
 			machine: string;
 		};
 		const index = (
@@ -530,7 +530,7 @@ describe.skipIf(!hasRclone)("off-box archive cycle", () => {
 		expect(initialized.code).toBe(0);
 		expect(initialized.stderr).toBe("");
 
-		const config = JSON.parse(await readFile(join(layout.blotterHome, "config.json"), "utf8")) as {
+		const config = JSON.parse(await readFile(join(layout.packbatHome, "config.json"), "utf8")) as {
 			machine: string;
 			offbox: unknown;
 		};
@@ -558,7 +558,7 @@ describe.skipIf(!hasRclone)("off-box archive cycle", () => {
 
 		const dataPaths = records.map((record) => join(layout.remote, config.machine, `${record.path}.age`));
 		const firstCiphertexts = await Promise.all(dataPaths.map(async (path) => await readFile(path)));
-		const statePath = remoteStateDirectory(layout.blotterHome, layout.remote);
+		const statePath = remoteStateDirectory(layout.packbatHome, layout.remote);
 		const uploadedPath = join(statePath, "uploaded.jsonl");
 		const firstUploadedState = await readFile(uploadedPath, "utf8");
 
@@ -601,11 +601,11 @@ describe.skipIf(!hasRclone)("off-box archive cycle", () => {
 		expect((await stat(encryptedIndexPath)).mtimeMs).toBeGreaterThanOrEqual((await stat(dataPaths[0]!)).mtimeMs);
 		expect(await readFile(remoteMarker, "utf8")).toBe("copy must not delete this\n");
 
-		for (const path of await listFiles(layout.blotterHome)) {
-			expect((await readFile(join(layout.blotterHome, path))).includes("AGE-SECRET-KEY")).toBe(false);
+		for (const path of await listFiles(layout.packbatHome)) {
+			expect((await readFile(join(layout.packbatHome, path))).includes("AGE-SECRET-KEY")).toBe(false);
 		}
 
-		const kitPath = join(layout.home, "blotter-recovery-kit.txt");
+		const kitPath = join(layout.home, "packbat-recovery-kit.txt");
 		await writeFile(
 			kitPath,
 			renderRecoveryKit({

@@ -3,7 +3,7 @@ import { accessSync, constants } from "node:fs";
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { isAbsolute, join } from "node:path";
 import { promisify } from "node:util";
-import { BlotterError } from "../core/errors.js";
+import { PackbatError } from "../core/errors.js";
 import { commandOnPath } from "../core/exec.js";
 import { pathExists } from "../core/fs.js";
 import { generateCronEntry, mergeCronTab, stripCronEntry } from "./cron.js";
@@ -12,8 +12,8 @@ import { generateLaunchdPlist, LAUNCHD_LABEL } from "./launchd.js";
 import { generateSystemdService, generateSystemdTimer } from "./systemd.js";
 
 const execFileAsync = promisify(execFile);
-const SYSTEMD_SERVICE = "blotter-sync.service";
-const SYSTEMD_TIMER = "blotter-sync.timer";
+const SYSTEMD_SERVICE = "packbat-sync.service";
+const SYSTEMD_TIMER = "packbat-sync.timer";
 
 export interface ScheduleInstallOptions {
 	userHome: string;
@@ -66,14 +66,14 @@ function systemctlForRemoval(env: NodeJS.ProcessEnv): string | null {
 
 function userId(): number {
 	if (process.getuid === undefined) {
-		throw new BlotterError("scheduler requires a POSIX user id");
+		throw new PackbatError("scheduler requires a POSIX user id");
 	}
 	return process.getuid();
 }
 
 function assertAbsoluteCommand(options: { nodePath: string; entryPath: string }): void {
 	if (!isAbsolute(options.nodePath) || !isAbsolute(options.entryPath)) {
-		throw new BlotterError("scheduler command paths must be absolute");
+		throw new PackbatError("scheduler command paths must be absolute");
 	}
 }
 
@@ -83,7 +83,7 @@ async function runSchedulerCommand(command: string, args: string[]): Promise<str
 		return result.stdout;
 	} catch (error) {
 		const message = error instanceof Error ? error.message : String(error);
-		throw new BlotterError(`scheduler command failed: ${command} ${args.join(" ")}: ${message}`);
+		throw new PackbatError(`scheduler command failed: ${command} ${args.join(" ")}: ${message}`);
 	}
 }
 
@@ -104,7 +104,7 @@ async function readCrontab(crontab: string): Promise<string> {
 			return "";
 		}
 		const message = error instanceof Error ? error.message : String(error);
-		throw new BlotterError(`scheduler command failed: ${crontab} -l: ${message}`);
+		throw new PackbatError(`scheduler command failed: ${crontab} -l: ${message}`);
 	}
 }
 
@@ -121,7 +121,7 @@ async function writeCrontab(crontab: string, contents: string): Promise<void> {
 				resolve();
 				return;
 			}
-			reject(new BlotterError(`scheduler command failed: ${crontab} -: ${stderr.trim() || `exit ${code}`}`));
+			reject(new PackbatError(`scheduler command failed: ${crontab} -: ${stderr.trim() || `exit ${code}`}`));
 		});
 		child.stdin.end(contents);
 	});
@@ -185,7 +185,7 @@ export function scheduleKind(env: NodeJS.ProcessEnv): ScheduleKind {
 			? "systemd"
 			: "cron";
 	}
-	throw new BlotterError(`scheduling is not supported on ${process.platform}`);
+	throw new PackbatError(`scheduling is not supported on ${process.platform}`);
 }
 
 export function previewSchedule(options: ScheduleInstallOptions): ScheduleInstallResult {
@@ -242,7 +242,7 @@ async function deactivateLinux(options: ScheduleActivationOptions): Promise<void
 		const systemctl = systemctlForRemoval(options.env);
 		if (systemctl === null) {
 			if (pathExists(enablementPath)) {
-				throw new BlotterError("cannot deactivate the enabled systemd timer because systemctl is unavailable");
+				throw new PackbatError("cannot deactivate the enabled systemd timer because systemctl is unavailable");
 			}
 		} else if (pathExists(enablementPath)) {
 			await runSchedulerCommand(systemctl, ["--user", "disable", "--now", SYSTEMD_TIMER]);
@@ -253,7 +253,7 @@ async function deactivateLinux(options: ScheduleActivationOptions): Promise<void
 	if (wasActivated && pathExists(cronArtifactPath(options.statePath))) {
 		const crontab = commandOnPath("crontab", options.env);
 		if (crontab === null) {
-			throw new BlotterError("cannot deactivate the installed cron schedule because crontab is unavailable");
+			throw new PackbatError("cannot deactivate the installed cron schedule because crontab is unavailable");
 		}
 		const current = await readCrontab(crontab);
 		const stripped = stripCronEntry(current);
@@ -274,7 +274,7 @@ export async function deactivateSchedule(options: ScheduleActivationOptions): Pr
 		await rm(activationMarkerPath(options.statePath), { force: true });
 		return;
 	}
-	throw new BlotterError(`scheduling is not supported on ${process.platform}`);
+	throw new PackbatError(`scheduling is not supported on ${process.platform}`);
 }
 
 async function activateLaunchd(options: ScheduleActivationOptions): Promise<string[]> {
@@ -307,7 +307,7 @@ async function activateSystemd(options: ScheduleActivationOptions, systemctl: st
 async function activateCron(options: ScheduleActivationOptions): Promise<string[]> {
 	const crontab = commandOnPath("crontab", options.env);
 	if (crontab === null) {
-		throw new BlotterError("no supported scheduler found (systemctl and crontab are unavailable)");
+		throw new PackbatError("no supported scheduler found (systemctl and crontab are unavailable)");
 	}
 	const entry = (await readFile(cronArtifactPath(options.statePath), "utf8")).trimEnd();
 	const current = await readCrontab(crontab);
@@ -330,7 +330,7 @@ export async function activateSchedule(options: ScheduleActivationOptions): Prom
 		case "systemd": {
 			const systemctl = commandOnPath("systemctl", options.env);
 			if (systemctl === null) {
-				throw new BlotterError("systemd user manager became unavailable during schedule activation");
+				throw new PackbatError("systemd user manager became unavailable during schedule activation");
 			}
 			notes = await activateSystemd(options, systemctl);
 			break;
@@ -387,7 +387,7 @@ async function uninstallLinux(options: ScheduleUninstallOptions): Promise<Schedu
 			await writeCrontab(crontab, stripped);
 		}
 		if (hadCronEntry) {
-			removedPaths.push("crontab (# blotter-sync)");
+			removedPaths.push("crontab (# packbat-sync)");
 		}
 	}
 	if (systemctl !== null) {
@@ -403,5 +403,5 @@ export async function uninstallSchedule(options: ScheduleUninstallOptions): Prom
 	if (process.platform === "linux") {
 		return await uninstallLinux(options);
 	}
-	throw new BlotterError(`scheduling is not supported on ${process.platform}`);
+	throw new PackbatError(`scheduling is not supported on ${process.platform}`);
 }

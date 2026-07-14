@@ -2,10 +2,10 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 
 /**
- * Everything blotter owns lives under one directory so wholesale backup of
- * blotter itself is trivial. `BLOTTER_HOME` overrides (also the test seam).
+ * Everything Packbat owns lives under one directory so wholesale backup of
+ * Packbat itself is trivial. `PACKBAT_HOME` overrides (also the test seam).
  */
-export interface BlotterHome {
+export interface PackbatHome {
 	root: string;
 	configPath: string;
 	statePath: string;
@@ -13,13 +13,13 @@ export interface BlotterHome {
 	cachePath: string;
 	/** Default archive root; config.archiveRoot may point elsewhere. */
 	defaultArchiveRoot: string;
-	/** Blotter-owned rclone config (offbox "managed" mode). */
+	/** Packbat-owned rclone config (offbox "managed" mode). */
 	rcloneConfPath: string;
 }
 
-export function resolveHome(env: NodeJS.ProcessEnv = process.env): BlotterHome {
-	const override = env.BLOTTER_HOME?.trim();
-	const root = override ? override : join(homedir(), ".blotter");
+export function resolveHome(env: NodeJS.ProcessEnv = process.env): PackbatHome {
+	const override = env.PACKBAT_HOME?.trim();
+	const root = override ? override : join(homedir(), ".packbat");
 	return {
 		root,
 		configPath: join(root, "config.json"),

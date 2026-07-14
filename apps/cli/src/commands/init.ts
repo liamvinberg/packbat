@@ -14,10 +14,10 @@ import { uninstallSchedule } from "../schedule/scheduler.js";
 import { runDoctor } from "./doctor.js";
 import { runSync } from "./sync.js";
 
-const USAGE = `Usage: blotter init --yes [--archive-root <abs>] [--offbox skip|remote]
+const USAGE = `Usage: packbat init --yes [--archive-root <abs>] [--offbox skip|remote]
        [--offbox-remote <rclone-dest>] [--age-recipient <age1…>]
        [--rclone-config default|managed] [--no-activate]
-       blotter init --uninstall
+       packbat init --uninstall
 `;
 
 interface InitOptions {
@@ -32,7 +32,7 @@ interface InitOptions {
 }
 
 function usageError(message: string): null {
-	process.stderr.write(`blotter init: ${message}\n\n${USAGE}`);
+	process.stderr.write(`packbat init: ${message}\n\n${USAGE}`);
 	return null;
 }
 
@@ -204,7 +204,7 @@ export async function runInit(argv: string[]): Promise<number> {
 			const { runInitWizard } = await import("./init-wizard.js");
 			return await runInitWizard();
 		}
-		process.stderr.write("blotter init: stdin is not a TTY; run `blotter init --yes`\n");
+		process.stderr.write("packbat init: stdin is not a TTY; run `packbat init --yes`\n");
 		return 1;
 	}
 

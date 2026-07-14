@@ -4,10 +4,10 @@ import { createRequire } from "node:module";
 import { basename, dirname, join } from "node:path";
 import type { DatabaseSync } from "node:sqlite";
 import type { HarnessId } from "../adapters/adapter.js";
-import type { BlotterConfig } from "../core/config.js";
-import { BlotterError } from "../core/errors.js";
+import type { PackbatConfig } from "../core/config.js";
+import { PackbatError } from "../core/errors.js";
 import { isEnoent } from "../core/fs.js";
-import type { BlotterHome } from "../core/home.js";
+import type { PackbatHome } from "../core/home.js";
 import { getReader } from "../readers/registry.js";
 import { readArchiveCatalog } from "./catalog.js";
 import type { ArchivedRetrievalUnit, ReadTurn } from "./types.js";
@@ -177,7 +177,7 @@ interface HitRow {
 	commands: string;
 }
 
-export function retrievalDatabasePath(home: BlotterHome): string {
+export function retrievalDatabasePath(home: PackbatHome): string {
 	return join(home.cachePath, "retrieval.sqlite");
 }
 
@@ -187,7 +187,7 @@ export function assertFts5(): void {
 		const options = database.prepare("PRAGMA compile_options").all() as Array<Record<string, unknown>>;
 		if (!options.some((row) => Object.values(row).includes("ENABLE_FTS5"))) {
 			// DRAFT copy
-			throw new BlotterError(
+			throw new PackbatError(
 				"retrieval requires SQLite FTS5; use the official Node >=22.16 build or a Node build compiled with ENABLE_FTS5",
 			);
 		}
@@ -335,7 +335,7 @@ function isChanged(file: ArchivedRetrievalUnit["files"][number], cached: CachedF
 	);
 }
 
-async function refresh(database: DatabaseSync, config: BlotterConfig, hashFiles = false): Promise<void> {
+async function refresh(database: DatabaseSync, config: PackbatConfig, hashFiles = false): Promise<void> {
 	const units = await readArchiveCatalog(config, { hashFiles });
 	const byKey = new Map(units.map((unit) => [unit.key, unit]));
 	const currentFiles = new Map(units.flatMap((unit) => unit.files.map((file) => [file.path, file] as const)));
@@ -395,7 +395,7 @@ function warnings(database: DatabaseSync): RetrievalWarning[] {
 	});
 }
 
-async function buildFresh(path: string, config: BlotterConfig): Promise<DatabaseSync> {
+async function buildFresh(path: string, config: PackbatConfig): Promise<DatabaseSync> {
 	const database = await createFreshAt(path);
 	try {
 		await refresh(database, config, true);
@@ -406,7 +406,7 @@ async function buildFresh(path: string, config: BlotterConfig): Promise<Database
 	}
 }
 
-export async function openAndRefresh(home: BlotterHome, config: BlotterConfig): Promise<DatabaseSync> {
+export async function openAndRefresh(home: PackbatHome, config: PackbatConfig): Promise<DatabaseSync> {
 	const path = retrievalDatabasePath(home);
 	await prepareDirectory(path);
 	let database = await openCurrent(path);
@@ -421,7 +421,7 @@ export async function openAndRefresh(home: BlotterHome, config: BlotterConfig): 
 	return database;
 }
 
-export async function rebuildRetrieval(home: BlotterHome, config: BlotterConfig): Promise<RebuildReport> {
+export async function rebuildRetrieval(home: PackbatHome, config: PackbatConfig): Promise<RebuildReport> {
 	const started = performance.now();
 	const target = retrievalDatabasePath(home);
 	await prepareDirectory(target);
@@ -521,7 +521,7 @@ export function searchDatabase(database: DatabaseSync, query: string, filters: S
 			.all(...parameters) as unknown as HitRow[];
 	} catch (error) {
 		// DRAFT copy
-		throw new BlotterError(`invalid search query: ${error instanceof Error ? error.message : String(error)}`);
+		throw new PackbatError(`invalid search query: ${error instanceof Error ? error.message : String(error)}`);
 	}
 	const truncated = rows.length > 50;
 	return {

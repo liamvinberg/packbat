@@ -49,11 +49,11 @@ export function renderRecoveryKit(input: RecoveryKitInput): string {
 	const restoreCommands = input.remotes
 		.map(
 			(remote, index) =>
-				`blotter restore --from-remote --identity <kit-file>${index === 0 ? "" : ` --remote ${remote.destination}`} <unit> --machine <source-machine>`,
+				`packbat restore --from-remote --identity <kit-file>${index === 0 ? "" : ` --remote ${remote.destination}`} <unit> --machine <source-machine>`,
 		)
 		.join("\n");
-	return `blotter recovery kit
-blotter version: ${packageMetadata.version}
+	return `Packbat recovery kit
+Packbat version: ${packageMetadata.version}
 format: ${RECOVERY_KIT_FORMAT}
 created: ${input.createdAt}
 
@@ -67,7 +67,7 @@ ${remoteSections}
 
 Fresh-machine setup
 Configure rclone access to ${input.remotes.map((remote) => remote.destination).join(", ")}, then run:
-blotter init --yes --offbox remote --offbox-remote ${firstRemote.destination} --age-recipient ${input.recipient} --rclone-config default
+packbat init --yes --offbox remote --offbox-remote ${firstRemote.destination} --age-recipient ${input.recipient} --rclone-config default
 ${additionalSetup}
 Fresh-machine restore
 ${restoreCommands}

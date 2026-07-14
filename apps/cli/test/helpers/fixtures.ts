@@ -219,7 +219,7 @@ export async function makeCodexStore(root: string, options: CodexStoreOptions = 
 					cwd: "/synthetic/project",
 					cli_version: "0.0.0-synthetic",
 					source: "cli",
-					originator: "blotter-fixture",
+					originator: "packbat-fixture",
 					model_provider: "synthetic",
 				},
 			},

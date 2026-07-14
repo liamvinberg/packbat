@@ -2,7 +2,7 @@ import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import { isAbsolute, join } from "node:path";
 import { cancel, confirm, intro, isCancel, log, note, outro, password, select, spinner, text } from "@clack/prompts";
-import { type BlotterConfig, loadConfig, type OffboxConfig } from "../core/config.js";
+import { loadConfig, type OffboxConfig, type PackbatConfig } from "../core/config.js";
 import { commandOnPath } from "../core/exec.js";
 import { resolveHome } from "../core/home.js";
 import {
@@ -42,8 +42,8 @@ type ConfiguredOffbox = Extract<OffboxConfig, { mode: "configured" }>;
 type OffboxRemote = Extract<OffboxConfig, { mode: "configured" }>["remotes"][number];
 
 type OffboxSetupResult =
-	| { kind: "skipped"; config: BlotterConfig }
-	| { kind: "configured"; config: BlotterConfig; offbox: ConfiguredOffbox; identity: string };
+	| { kind: "skipped"; config: PackbatConfig }
+	| { kind: "configured"; config: PackbatConfig; offbox: ConfiguredOffbox; identity: string };
 
 interface RemoteSetup {
 	remote: OffboxRemote;
@@ -86,7 +86,7 @@ async function askSecret(message: string): Promise<string | WizardCancelled> {
 function s3Destination(bucket: string, prefix: string): string {
 	const cleanBucket = bucket.replace(/^\/+|\/+$/gu, "");
 	const cleanPrefix = prefix.replace(/^\/+|\/+$/gu, "");
-	return `blotter:${cleanPrefix === "" ? cleanBucket : `${cleanBucket}/${cleanPrefix}`}`;
+	return `packbat:${cleanPrefix === "" ? cleanBucket : `${cleanBucket}/${cleanPrefix}`}`;
 }
 
 async function runStreaming(command: readonly string[]): Promise<void> {
@@ -198,7 +198,7 @@ async function askSftpRemote(): Promise<RemoteSetup | WizardCancelled> {
 	const remotePath = await askRequiredText("Remote path");
 	if (remotePath === WIZARD_CANCELLED) return remotePath;
 	const port = portAnswer.trim() === "" ? undefined : Number.parseInt(portAnswer.trim(), 10);
-	const destination = `blotter:${remotePath}`;
+	const destination = `packbat:${remotePath}`;
 
 	return {
 		remote: { type: "rclone", destination, rcloneConfig: "managed" },
@@ -226,7 +226,7 @@ async function askCustomRemote(): Promise<RemoteSetup | WizardCancelled> {
 			message: "Rclone config",
 			options: [
 				{ value: "default" as const, label: "Default rclone config" },
-				{ value: "managed" as const, label: "Managed by blotter" },
+				{ value: "managed" as const, label: "Managed by Packbat" },
 			],
 			initialValue: "default",
 		}),
@@ -279,7 +279,7 @@ async function saveRecoveryKit(kit: string, homePath: string): Promise<boolean |
 		return true;
 	}
 
-	const defaultPath = join(homePath, "blotter-recovery-kit.txt");
+	const defaultPath = join(homePath, "packbat-recovery-kit.txt");
 	const path = promptResult(
 		await text({
 			message: "Recovery kit path",
@@ -316,7 +316,7 @@ async function verifyCustody(challenge: string): Promise<boolean | WizardCancell
 	return false;
 }
 
-async function configureOffbox(config: BlotterConfig, homePath: string): Promise<OffboxSetupResult | WizardCancelled> {
+async function configureOffbox(config: PackbatConfig, homePath: string): Promise<OffboxSetupResult | WizardCancelled> {
 	const home = resolveHome();
 	const choice = promptResult<"skip" | "remote">(
 		await select<"skip" | "remote">({
@@ -365,7 +365,7 @@ async function configureOffbox(config: BlotterConfig, homePath: string): Promise
 }
 
 export async function runInitWizard(): Promise<number> {
-	intro("blotter init");
+	intro("packbat init");
 	const home = resolveHome();
 	const homePath = userHome();
 	const detection = detectInitStores(homePath);
@@ -494,6 +494,6 @@ export async function runInitWizard(): Promise<number> {
 
 	const doctorCode = await runDoctor([]);
 	const operationalFailure = syncCode === 1 || remoteCode === 1 || doctorCode === 1;
-	outro(operationalFailure ? "Setup failed. Run `blotter status`." : "Done. Run `blotter status`.");
+	outro(operationalFailure ? "Setup failed. Run `packbat status`." : "Done. Run `packbat status`.");
 	return operationalFailure ? 1 : 0;
 }

@@ -2,7 +2,7 @@ import { appendFile, mkdir, rename, rm, stat } from "node:fs/promises";
 import { join } from "node:path";
 
 const MAX_LOG_BYTES = 1024 * 1024;
-const LOG_NAME = "blotter.log";
+const LOG_NAME = "packbat.log";
 
 async function renameIfPresent(source: string, destination: string): Promise<void> {
 	try {

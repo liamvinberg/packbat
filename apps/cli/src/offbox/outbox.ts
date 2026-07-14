@@ -1,10 +1,10 @@
 import { createHash, randomUUID } from "node:crypto";
 import { appendFile, mkdir, readdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { basename, dirname, join, relative } from "node:path";
-import { type BlotterConfig, type OffboxConfig, type RemoteConfig, remoteStatePath } from "../core/config.js";
-import { BlotterError } from "../core/errors.js";
+import { type OffboxConfig, type PackbatConfig, type RemoteConfig, remoteStatePath } from "../core/config.js";
+import { PackbatError } from "../core/errors.js";
 import { isEnoent } from "../core/fs.js";
-import type { BlotterHome } from "../core/home.js";
+import type { PackbatHome } from "../core/home.js";
 import { appendLog } from "../core/log.js";
 import { writeAtomicJson } from "../core/stamps.js";
 import { encryptToRecipient } from "./age.js";
@@ -157,8 +157,8 @@ async function encryptFile(source: string, destination: string, recipient: strin
 }
 
 async function publishRemote(
-	home: BlotterHome,
-	config: BlotterConfig,
+	home: PackbatHome,
+	config: PackbatConfig,
 	offbox: ConfiguredOffbox,
 	remoteConfig: RemoteConfig,
 ): Promise<RemotePublishOutcome> {
@@ -177,8 +177,8 @@ async function publishRemote(
 	const hasPublished = uploaded.size > 0 || previousIndex !== null || (await pathExists(successPath));
 	if (!hasPublished && (await remote.indexExists(config.machine))) {
 		// DRAFT copy
-		throw new BlotterError(
-			`an archive for machine \`${config.machine}\` already exists at the remote; restore it first (\`blotter restore --from-remote --identity <kit-file>\`) or change \`machine\` in config.json.`,
+		throw new PackbatError(
+			`an archive for machine \`${config.machine}\` already exists at the remote; restore it first (\`packbat restore --from-remote --identity <kit-file>\`) or change \`machine\` in config.json.`,
 		);
 	}
 	const archiveFiles = await walkArchiveFiles(machinePath, config.machine);
@@ -248,8 +248,8 @@ async function publishRemote(
 }
 
 export async function publishOffbox(
-	home: BlotterHome,
-	config: BlotterConfig,
+	home: PackbatHome,
+	config: PackbatConfig,
 	offbox: ConfiguredOffbox,
 ): Promise<RemotePublishOutcome[]> {
 	const outcomes: RemotePublishOutcome[] = [];
@@ -267,7 +267,7 @@ export async function publishOffbox(
 	return outcomes;
 }
 
-export async function remindOffboxSkipped(home: BlotterHome, now: Date = new Date()): Promise<void> {
+export async function remindOffboxSkipped(home: PackbatHome, now: Date = new Date()): Promise<void> {
 	const stampPath = join(home.statePath, "offbox-reminder.json");
 	let remindedAtMs = Number.NaN;
 	try {

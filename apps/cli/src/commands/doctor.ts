@@ -13,7 +13,7 @@ import {
 } from "../doctor/facts.js";
 import { checkReconciled } from "../doctor/reconcile.js";
 
-const USAGE = "Usage: blotter doctor [--json]\n";
+const USAGE = "Usage: packbat doctor [--json]\n";
 
 function parseOptions(argv: string[]): { json: boolean } | null {
 	if (argv.length === 0) {
@@ -22,7 +22,7 @@ function parseOptions(argv: string[]): { json: boolean } | null {
 	if (argv.length === 1 && argv[0] === "--json") {
 		return { json: true };
 	}
-	process.stderr.write(`blotter doctor: only --json is accepted\n\n${USAGE}`);
+	process.stderr.write(`packbat doctor: only --json is accepted\n\n${USAGE}`);
 	return null;
 }
 

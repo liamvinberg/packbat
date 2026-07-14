@@ -4,9 +4,16 @@ settings:
   autoInstallPeers: true
   excludeLinksFromLockfile: false
 
+overrides:
+  packbat: link:apps/cli
+
 importers:
 
   .:
+    dependencies:
+      packbat:
+        specifier: link:apps/cli
+        version: link:apps/cli
     devDependencies:
       '@biomejs/biome':
         specifier: ^2.5.3

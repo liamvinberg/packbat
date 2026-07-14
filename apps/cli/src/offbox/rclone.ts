@@ -2,7 +2,7 @@ import { spawn } from "node:child_process";
 import { constants } from "node:fs";
 import { access, chmod, mkdir, open } from "node:fs/promises";
 import { dirname } from "node:path";
-import { BlotterError } from "../core/errors.js";
+import { PackbatError } from "../core/errors.js";
 import { commandOnPath } from "../core/exec.js";
 import { resolveHome } from "../core/home.js";
 
@@ -26,7 +26,7 @@ export async function discoverRclone(env: NodeJS.ProcessEnv = process.env): Prom
 			}
 		}
 	}
-	throw new BlotterError(RCLONE_MISSING);
+	throw new PackbatError(RCLONE_MISSING);
 }
 
 async function managedConfigArguments(mode: RcloneConfigMode): Promise<string[]> {
@@ -62,7 +62,7 @@ async function runRclone(
 			stderr += chunk.toString("utf8");
 		});
 		child.on("error", (error) => {
-			reject(new BlotterError(`could not start rclone: ${error.message}`));
+			reject(new PackbatError(`could not start rclone: ${error.message}`));
 		});
 		child.on("close", (code) => {
 			if (code === 0) {
@@ -70,7 +70,7 @@ async function runRclone(
 				return;
 			}
 			const output = `${stdout}${stderr}`;
-			reject(new BlotterError(`rclone ${command} failed${output.trim() === "" ? "" : `: ${output.trim()}`}`));
+			reject(new PackbatError(`rclone ${command} failed${output.trim() === "" ? "" : `: ${output.trim()}`}`));
 		});
 	});
 }
@@ -86,7 +86,7 @@ export async function remoteFileExists(destinationFile: string, mode: RcloneConf
 	try {
 		items = JSON.parse(output);
 	} catch {
-		throw new BlotterError("rclone lsjson returned invalid JSON");
+		throw new PackbatError("rclone lsjson returned invalid JSON");
 	}
 	return Array.isArray(items) && items.length > 0;
 }

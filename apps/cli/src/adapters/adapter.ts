@@ -104,7 +104,7 @@ export interface DatabaseSnapshotHarnessAdapter extends HarnessAdapterBase {
 export type HarnessAdapter = SessionHarnessAdapter | DatabaseSnapshotHarnessAdapter;
 
 /**
- * A store blotter recognizes but does not yet archive. Doctor reports these as
+ * A store Packbat recognizes but does not yet archive. Doctor reports these as
  * "found, not yet supported" so coverage gaps are visible instead of silent.
  */
 export interface UnsupportedStore {

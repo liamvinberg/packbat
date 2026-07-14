@@ -44,7 +44,7 @@ The apparent conflict is versioned, not platform-dependent:
   [#30461](https://github.com/anomalyco/opencode/pull/30461), merged 2026-06-02; `v1.16.0` is the first subsequent
   release. `v1.17.5` is therefore a hard-cut SQLite release. The legacy `storage/` directory may remain after an
   older upgrade, but it is not the live session store. A current adapter must not enumerate it or provide a JSON
-  fallback; that would violate blotter's hard-cut policy and could archive stale data.
+  fallback; that would violate Packbat's hard-cut policy and could archive stale data.
 
 ### Store root and overrides
 
@@ -143,7 +143,7 @@ Plan:
    `YYYYMMDDTHHmmss.SSSZ`. Hashing the completed backup deduplicates unchanged database state; the timestamp makes
    snapshots human-orderable. Never archive `opencode.db-wal` or `opencode.db-shm`; the completed backup is
    self-contained.
-4. Capture a small blotter-owned manifest beside the compressed database containing source path, OpenCode version,
+4. Capture a small Packbat-owned manifest beside the compressed database containing source path, OpenCode version,
    snapshot time, hash, byte size, and the session IDs/timestamps observed in that same backup. The manifest is an
    index, not the payload. The database remains raw, native OpenCode state.
 5. Restore only while the destination database is absent and no OpenCode process is using that path. Decompress to
@@ -180,7 +180,7 @@ upserting rows
 ([source](https://github.com/anomalyco/opencode/blob/8d78715d64d6f2401e5dfcd93745d082aaa1d163/packages/opencode/src/cli/cmd/import.ts#L167-L223)). This proves that the
 public session representation is sufficient for a resumable conversation, and share URLs feed the same importer.
 It omits other DB-owned state described above and rewrites instance paths, so export/import is a transformed
-portability format, not blotter's raw-at-rest archive format. `/share` uploads
+portability format, not Packbat's raw-at-rest archive format. `/share` uploads
 the conversation history, messages, and session metadata to a public link until `/unshare`
 ([docs](https://github.com/anomalyco/opencode/blob/8d78715d64d6f2401e5dfcd93745d082aaa1d163/packages/web/src/content/docs/share.mdx#L14-L38),
  [docs](https://github.com/anomalyco/opencode/blob/8d78715d64d6f2401e5dfcd93745d082aaa1d163/packages/web/src/content/docs/share.mdx#L81-L107)); it is corroborating
@@ -206,7 +206,7 @@ OpenCode does not automatically prune session history; explicit deletion removes
 1. Run against an isolated `XDG_DATA_HOME` and a dedicated absolute `OPENCODE_DB`; create one real non-interactive
    session containing a random codename, and capture its `ses_...` ID. Do not point the test at the user's normal
    database.
-2. Assert that the database is in WAL mode. Keep OpenCode capable of writing while blotter syncs, so the test proves
+2. Assert that the database is in WAL mode. Keep OpenCode capable of writing while Packbat syncs, so the test proves
    the online snapshot path rather than a lucky closed-database copy. Record the completed snapshot bytes/hash.
 3. Remove the isolated database plus any `-wal`/`-shm` sidecars, then restore the snapshot to the same absolute
    `OPENCODE_DB` path. Assert the restored DB bytes equal the completed backup artifact, not the concurrently
@@ -392,7 +392,7 @@ Gemini CLI deletes sessions older than general.sessionRetention.maxAge (30 days 
    `gemini -p "The fictional continuity codename is <random>. Remember it." --output-format json`.
 3. Find the one new top-level `session-*.jsonl`, parse its first line for the full `sessionId`, and retain the main
    file's exact bytes and relative path. Assert the basename contains only `sessionId.slice(0, 8)`.
-4. Run blotter sync, remove the main transcript and its session-owned sidecars while leaving credentials alone, then
+4. Run packbat sync, remove the main transcript and its session-owned sidecars while leaving credentials alone, then
    restore by full UUID. Assert the main file and sidecars return at their exact relative paths and that the main
    bytes equal the pre-sync bytes.
 5. From the same project run `gemini --list-sessions`; the restored UUID prefix must appear. This proves

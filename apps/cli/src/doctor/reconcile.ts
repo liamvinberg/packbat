@@ -136,7 +136,7 @@ export async function checkReconciled(context: DoctorContext): Promise<Fact> {
 		try {
 			if (adapter.mutationModel === "db-snapshot") {
 				for (const unit of await adapter.enumerate(storeRoot)) {
-					const temporaryRoot = await mkdtemp(join(tmpdir(), "blotter-doctor-snapshot-"));
+					const temporaryRoot = await mkdtemp(join(tmpdir(), "packbat-doctor-snapshot-"));
 					try {
 						const capture = await adapter.snapshot(unit, join(temporaryRoot, "snapshot.db"));
 						sources.push({

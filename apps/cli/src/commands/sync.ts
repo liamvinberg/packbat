@@ -7,7 +7,7 @@ import { appendLog } from "../core/log.js";
 import { writeRunStamps } from "../core/stamps.js";
 import { publishOffbox, type RemotePublishOutcome, remindOffboxSkipped } from "../offbox/outbox.js";
 
-const USAGE = "Usage: blotter sync\n";
+const USAGE = "Usage: packbat sync\n";
 
 export interface SyncOutputOptions {
 	writeSummary?: boolean;
@@ -93,13 +93,13 @@ export async function runSync(argv: string[], output: SyncOutputOptions = {}): P
 			await appendLog(home.logsPath, `off-box failed (${outcome.destination}): ${outcome.error}`, new Date(finishedAt)); // DRAFT copy
 		}
 		for (const error of errors) {
-			process.stderr.write(`blotter sync: ${error}\n`);
+			process.stderr.write(`packbat sync: ${error}\n`);
 		}
 		if (offboxError !== undefined) {
-			process.stderr.write(`blotter sync: off-box: ${offboxError}\n`);
+			process.stderr.write(`packbat sync: off-box: ${offboxError}\n`);
 		}
 		for (const outcome of offboxFailures) {
-			process.stderr.write(`blotter sync: off-box ${outcome.destination}: ${outcome.error}\n`); // DRAFT copy
+			process.stderr.write(`packbat sync: off-box ${outcome.destination}: ${outcome.error}\n`); // DRAFT copy
 		}
 		reportSummary(summary, output);
 		return ok && offboxFailures.length === 0 && offboxError === undefined ? 0 : 1;

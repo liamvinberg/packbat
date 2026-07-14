@@ -10,7 +10,7 @@ import {
 import { restoreFromRemote } from "../offbox/remote-restore.js";
 
 const USAGE =
-	"Usage: blotter restore [--machine <name>] [--force] [--from-remote --identity <file> [--remote <destination>]] [<id-or-prefix>]\n"; // DRAFT copy
+	"Usage: packbat restore [--machine <name>] [--force] [--from-remote --identity <file> [--remote <destination>]] [<id-or-prefix>]\n"; // DRAFT copy
 const MACHINE_PATTERN = /^[a-z0-9][a-z0-9-]*$/;
 
 interface RestoreOptions {
@@ -23,7 +23,7 @@ interface RestoreOptions {
 }
 
 function usageError(message: string): null {
-	process.stderr.write(`blotter restore: ${message}\n\n${USAGE}`);
+	process.stderr.write(`packbat restore: ${message}\n\n${USAGE}`);
 	return null;
 }
 

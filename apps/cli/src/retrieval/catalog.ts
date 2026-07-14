@@ -4,7 +4,7 @@ import { stat } from "node:fs/promises";
 import { join, relative, sep } from "node:path";
 import { type FileRole, type HarnessId, isHarnessId, UUID_SOURCE } from "../adapters/adapter.js";
 import { adapters } from "../adapters/registry.js";
-import type { BlotterConfig } from "../core/config.js";
+import type { PackbatConfig } from "../core/config.js";
 import { readDirectoryOrEmpty } from "../core/fs.js";
 import { readIndex, type SessionArchiveIndexRecord } from "../core/index.js";
 import type { ArchivedRetrievalFile, ArchivedRetrievalUnit } from "./types.js";
@@ -110,7 +110,7 @@ async function sha256(path: string): Promise<string> {
 }
 
 export async function readArchiveCatalog(
-	config: BlotterConfig,
+	config: PackbatConfig,
 	options: { hashFiles?: boolean } = {},
 ): Promise<ArchivedRetrievalUnit[]> {
 	const files = new Map<string, ArchivedRetrievalFile>();

@@ -1,7 +1,7 @@
 import { join } from "node:path";
 import type { ScheduleEnvironment } from "./environment.js";
 
-export const LAUNCHD_LABEL = "com.blotter.sync";
+export const LAUNCHD_LABEL = "dev.packbat.sync";
 
 export interface LaunchdArtifactOptions {
 	nodePath: string;

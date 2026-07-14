@@ -9,7 +9,7 @@ import { openCodeAdapter } from "./opencode.js";
 const roots: string[] = [];
 
 async function makeRoot(): Promise<string> {
-	const root = await mkdtemp(join(tmpdir(), "blotter-opencode-adapter-"));
+	const root = await mkdtemp(join(tmpdir(), "packbat-opencode-adapter-"));
 	roots.push(root);
 	return root;
 }

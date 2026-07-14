@@ -10,11 +10,11 @@ import { fileURLToPath } from "node:url";
  * user or script could observe — exit codes, output, files on disk.
  */
 
-const cliEntry = fileURLToPath(new URL("../../dist/main.js", import.meta.url));
+const cliEntry = fileURLToPath(new URL("../../bin/packbat.js", import.meta.url));
 
 export interface RunCliOptions {
 	/**
-	 * Fake $HOME for the process. Every default root (blotter home, harness
+	 * Fake $HOME for the process. Every default root (packbat home, harness
 	 * stores, LaunchAgents) resolves under it, so tests are hermetic: the
 	 * developer's real stores and scheduler are unreachable by construction.
 	 */
@@ -64,5 +64,5 @@ export async function runCli(args: string[], options: RunCliOptions): Promise<Cl
 
 /** A throwaway $HOME under the OS temp dir. */
 export async function makeTempHome(): Promise<string> {
-	return await mkdtemp(join(tmpdir(), "blotter-test-"));
+	return await mkdtemp(join(tmpdir(), "packbat-test-"));
 }

@@ -15,7 +15,7 @@ export function generateSystemdService(options: SystemdServiceOptions): string {
 		.map(([key, value]) => `Environment=${quoteSystemdValue(`${key}=${value}`)}\n`)
 		.join("");
 	return `[Unit]
-Description=Archive AI agent sessions with blotter
+Description=Archive AI agent sessions with Packbat
 
 [Service]
 Type=oneshot
@@ -25,12 +25,12 @@ ${environment}`;
 
 export function generateSystemdTimer(): string {
 	return `[Unit]
-Description=Run blotter sync hourly
+Description=Run Packbat sync hourly
 
 [Timer]
 OnCalendar=*-*-* *:03:00
 Persistent=true
-Unit=blotter-sync.service
+Unit=packbat-sync.service
 
 [Install]
 WantedBy=timers.target

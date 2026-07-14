@@ -12,7 +12,7 @@ import {
 } from "../adapters/adapter.js";
 import { adapters } from "../adapters/registry.js";
 import { compressFile, decompressBytes } from "./compress.js";
-import type { BlotterConfig } from "./config.js";
+import type { PackbatConfig } from "./config.js";
 import { errorMessage } from "./errors.js";
 import { isEnoent, readDirectoryOrEmpty, statOrNull } from "./fs.js";
 import {
@@ -172,7 +172,7 @@ async function snapshotIndexRecord(machine: string, snapshot: ExistingSnapshot):
 }
 
 async function archiveDatabaseSnapshot(
-	config: BlotterConfig,
+	config: PackbatConfig,
 	machinePath: string,
 	indexPath: string,
 	index: Awaited<ReturnType<typeof readIndex>>,
@@ -256,7 +256,7 @@ async function archiveDatabaseSnapshot(
 }
 
 async function archiveSessions(
-	config: BlotterConfig,
+	config: PackbatConfig,
 	machinePath: string,
 	indexPath: string,
 	index: Awaited<ReturnType<typeof readIndex>>,
@@ -329,7 +329,7 @@ async function archiveSessions(
 	}
 }
 
-export async function sweep(config: BlotterConfig, env: NodeJS.ProcessEnv): Promise<SweepResult> {
+export async function sweep(config: PackbatConfig, env: NodeJS.ProcessEnv): Promise<SweepResult> {
 	const result: SweepResult = {
 		...emptyCounts(),
 		repaired: 0,

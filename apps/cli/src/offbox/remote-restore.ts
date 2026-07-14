@@ -1,8 +1,8 @@
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import type { BlotterConfig, RemoteConfig } from "../core/config.js";
-import { BlotterError, errorMessage } from "../core/errors.js";
+import type { PackbatConfig, RemoteConfig } from "../core/config.js";
+import { errorMessage, PackbatError } from "../core/errors.js";
 import {
 	type ArchivedUnit,
 	type RestoreResult,
@@ -22,10 +22,10 @@ async function readIdentity(path: string): Promise<string> {
 	try {
 		return parseIdentityFile(await readFile(path, "utf8"));
 	} catch (error) {
-		if (error instanceof BlotterError) {
+		if (error instanceof PackbatError) {
 			throw error;
 		}
-		throw new BlotterError(`could not read identity file ${path}: ${errorMessage(error)}`);
+		throw new PackbatError(`could not read identity file ${path}: ${errorMessage(error)}`);
 	}
 }
 
@@ -44,13 +44,13 @@ async function pullAndDecryptFile(options: {
 			await decryptWithIdentity(options.identity, await readFile(options.encryptedPath)),
 		);
 	} catch (error) {
-		throw new BlotterError(`could not decrypt ${options.label}: ${errorMessage(error)}`);
+		throw new PackbatError(`could not decrypt ${options.label}: ${errorMessage(error)}`);
 	}
 }
 
-function selectRemote(config: BlotterConfig, destination: string | undefined): RemoteConfig {
+function selectRemote(config: PackbatConfig, destination: string | undefined): RemoteConfig {
 	if (config.offbox.mode !== "configured") {
-		throw new BlotterError("off-box is not configured; run `blotter init` first");
+		throw new PackbatError("off-box is not configured; run `packbat init` first");
 	}
 	if (destination === undefined) {
 		return config.offbox.remotes[0];
@@ -58,13 +58,13 @@ function selectRemote(config: BlotterConfig, destination: string | undefined): R
 	const remote = config.offbox.remotes.find((candidate) => candidate.destination === destination);
 	if (remote === undefined) {
 		// DRAFT copy
-		throw new BlotterError(`no configured remote has destination ${destination}`);
+		throw new PackbatError(`no configured remote has destination ${destination}`);
 	}
 	return remote;
 }
 
 export async function restoreFromRemote(options: {
-	config: BlotterConfig;
+	config: PackbatConfig;
 	machine: string;
 	identityPath: string;
 	remoteDestination: string | undefined;
@@ -72,7 +72,7 @@ export async function restoreFromRemote(options: {
 	force: boolean;
 }): Promise<RemoteRestoreResult> {
 	if (options.config.offbox.mode !== "configured") {
-		throw new BlotterError("off-box is not configured; run `blotter init` first");
+		throw new PackbatError("off-box is not configured; run `packbat init` first");
 	}
 	const offbox = options.config.offbox;
 	const remoteConfig = selectRemote(options.config, options.remoteDestination);
@@ -82,13 +82,13 @@ export async function restoreFromRemote(options: {
 	try {
 		recipient = await identityToRecipient(identity);
 	} catch (error) {
-		throw new BlotterError(`could not parse age identity: ${errorMessage(error)}`);
+		throw new PackbatError(`could not parse age identity: ${errorMessage(error)}`);
 	}
 	if (recipient !== offbox.recipient) {
-		throw new BlotterError("identity does not match the configured age recipient");
+		throw new PackbatError("identity does not match the configured age recipient");
 	}
 
-	const stagePath = await mkdtemp(join(tmpdir(), "blotter-remote-restore-"));
+	const stagePath = await mkdtemp(join(tmpdir(), "packbat-remote-restore-"));
 	try {
 		const machinePath = join(stagePath, options.machine);
 		const encryptedIndexPath = join(stagePath, "index.jsonl.age");
@@ -100,7 +100,7 @@ export async function restoreFromRemote(options: {
 			identity,
 			label: "remote index",
 		});
-		const stageConfig: BlotterConfig = { ...options.config, archiveRoot: stagePath };
+		const stageConfig: PackbatConfig = { ...options.config, archiveRoot: stagePath };
 		const units = await readArchivedUnits(stageConfig, options.machine);
 		if (options.prefix === undefined) {
 			return { kind: "listed", units };

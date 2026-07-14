@@ -8,7 +8,7 @@ credential was created. Console labels and provider policy below are current as 
 
 | Provider | Provisional verdict | Why | Still requires the live leg |
 | --- | --- | --- | --- |
-| Google Drive | **Provisional go** | A Desktop OAuth client with `drive.file` gives blotter narrow access to files it creates. The scope is non-sensitive, so it avoids sensitive/restricted-scope review and a security assessment. An External app must be moved out of Testing for durable refresh tokens. | Console registration, exact consent presentation, rclone's config-file update after refresh, an app-created-file restore, revocation error text, and sustained hourly cadence. |
+| Google Drive | **Provisional go** | A Desktop OAuth client with `drive.file` gives Packbat narrow access to files it creates. The scope is non-sensitive, so it avoids sensitive/restricted-scope review and a security assessment. An External app must be moved out of Testing for durable refresh tokens. | Console registration, exact consent presentation, rclone's config-file update after refresh, an app-created-file restore, revocation error text, and sustained hourly cadence. |
 | Dropbox | **Provisional go** | An App Folder app confines rclone to `/Apps/<app-name>`. Dropbox supports offline refresh tokens, and rclone documents the exact app permissions and redirect URI it needs. | Console registration, browser consent, App Folder path behavior, permission sufficiency for copy/restore, rclone's config-file update after refresh, revocation error text, and sustained hourly cadence. |
 
 Neither verdict is final until the human live leg completes the publish, restore, refresh, revoke, and cadence checks.
@@ -65,9 +65,9 @@ Google ties the 100-user unverified-app cap and warning to unapproved sensitive 
 to `drive.file` should not enter that lane; the live consent screen still needs to prove it
 ([Google: app audience and user cap](https://support.google.com/cloud/answer/15549945#oauth-user-cap)).
 
-For the proper shared blotter client, complete the lighter brand-verification lane:
+For the proper shared Packbat client, complete the lighter brand-verification lane:
 
-1. Host a public app homepage on a domain blotter controls. It must identify and describe blotter. Host a privacy policy
+1. Host a public app homepage on a domain Packbat controls. It must identify and describe Packbat. Host a privacy policy
    on the same domain that explains how Google user data is accessed, used, stored, and shared. Put the homepage,
    privacy-policy URL, optional terms URL, support email, and developer-contact email in **Branding**
    ([Google: brand requirements](https://support.google.com/cloud/answer/13464321#brand-verification-requirements)).
@@ -137,10 +137,10 @@ loopback listener and never completed provider authorization. The redacted recor
 
 ```sh
 RCLONE=/opt/homebrew/bin/rclone
-RCLONE_CONFIG="$BLOTTER_HOME/rclone.conf"
+RCLONE_CONFIG="$PACKBAT_HOME/rclone.conf"
 
 # Google Drive. The remaining interaction is the browser consent.
-"$RCLONE" config create blotter-drive drive \
+"$RCLONE" config create packbat-drive drive \
   client_id "$GOOGLE_CLIENT_ID" \
   client_secret "$GOOGLE_CLIENT_SECRET" \
   scope drive.file \
@@ -152,7 +152,7 @@ RCLONE_CONFIG="$BLOTTER_HOME/rclone.conf"
 
 # Dropbox App Folder. App Folder access and action scopes are properties of the
 # Dropbox app, not extra rclone configuration fields.
-"$RCLONE" config create blotter-dropbox dropbox \
+"$RCLONE" config create packbat-dropbox dropbox \
   client_id "$DROPBOX_APP_KEY" \
   client_secret "$DROPBOX_APP_SECRET" \
   config_is_local true \
@@ -170,8 +170,8 @@ mistaking a long base64-like value for one that is already obscured, a documente
 ([rclone: `config create`](https://rclone.org/commands/rclone_config_create/)). `--no-output` suppresses the completed
 configuration on stdout, not the browser consent. Do not add `--non-interactive` to this one-shot local command: with
 `config_is_local=true`, rclone starts the loopback OAuth flow, while the flag only changes how unanswered configuration
-questions are represented. The config must be blotter's managed `0600` file. The dry run created that mode, and rclone
-documents restricted permissions and its need to rewrite refreshed tokens, but blotter should still enforce the mode
+questions are represented. The config must be Packbat's managed `0600` file. The dry run created that mode, and rclone
+documents restricted permissions and its need to rewrite refreshed tokens, but Packbat should still enforce the mode
 after every create/update ([rclone: config file](https://rclone.org/docs/#config-file)).
 
 ### Headless fallback
@@ -180,7 +180,7 @@ There are two exact headless forms. The canonical rclone form begins on the head
 continuation containing a base64 configuration blob:
 
 ```sh
-"$RCLONE" config create blotter-drive drive \
+"$RCLONE" config create packbat-drive drive \
   client_id "$GOOGLE_CLIENT_ID" \
   client_secret "$GOOGLE_CLIENT_SECRET" \
   scope drive.file \
@@ -189,7 +189,7 @@ continuation containing a base64 configuration blob:
   --non-interactive \
   --config "$RCLONE_CONFIG"
 
-"$RCLONE" config create blotter-dropbox dropbox \
+"$RCLONE" config create packbat-dropbox dropbox \
   client_id "$DROPBOX_APP_KEY" \
   client_secret "$DROPBOX_APP_SECRET" \
   config_is_local false \
@@ -221,7 +221,7 @@ also validated with fake IDs and interrupted at the loopback listener, are:
 it can finish without another question:
 
 ```sh
-"$RCLONE" config create blotter-drive drive \
+"$RCLONE" config create packbat-drive drive \
   client_id "$GOOGLE_CLIENT_ID" \
   client_secret "$GOOGLE_CLIENT_SECRET" \
   scope drive.file \
@@ -233,7 +233,7 @@ it can finish without another question:
   --no-output \
   --config "$RCLONE_CONFIG"
 
-"$RCLONE" config create blotter-dropbox dropbox \
+"$RCLONE" config create packbat-dropbox dropbox \
   client_id "$DROPBOX_APP_KEY" \
   client_secret "$DROPBOX_APP_SECRET" \
   token "$OAUTH_TOKEN_JSON" \
@@ -288,7 +288,7 @@ fetches up to five times, but treats OAuth HTTP 400/401 responses as fatal. A pr
 fatal `token expired and there's no refresh token` error
 ([rclone: OAuth error wrapping](https://github.com/rclone/rclone/blob/v1.74.4/lib/oauthutil/oauthutil.go#L275-L297),
 [rclone: token refresh path](https://github.com/rclone/rclone/blob/v1.74.4/lib/oauthutil/oauthutil.go#L307-L372)).
-Blotter currently wraps the entire stderr as `rclone copy failed: ...`; the live leg must still capture the provider and
+Packbat currently wraps the entire stderr as `rclone copy failed: ...`; the live leg must still capture the provider and
 top-level rclone prefixes around this stable inner class.
 
 ### Dropbox
@@ -331,13 +331,13 @@ offbox-auth  problem  Dropbox authorization is no longer valid; re-authenticate 
 
 Diagnostic metadata may retain a redacted class such as `invalid_grant`, `invalid_client`, `expired_access_token`, or
 `invalid_access_token`. The user-facing remediation is reauthorization for grant failures. Client failures should say
-that blotter's provider client needs repair/update instead.
+that Packbat's provider client needs repair/update instead.
 
 ## Recovery-kit implications
 
 The current [`renderRecoveryKit`](../../apps/cli/src/offbox/recovery-kit.ts) reduces every arbitrary rclone target to
 `type: rclone` plus `destination`, then tells a fresh machine to use `--rclone-config default`. That is insufficient for
-an OAuth remote backed by blotter's managed config. Tokens are machine credentials, not recovery material: the new
+an OAuth remote backed by Packbat's managed config. Tokens are machine credentials, not recovery material: the new
 machine must authorize again, while the kit carries only enough non-secret metadata to reconstruct the destination.
 
 A concrete extension is:
@@ -354,28 +354,28 @@ and `renderRemote` should produce:
 Remote
 type: oauth
 provider: google-drive
-destination: blotter-drive:blotter
+destination: packbat-drive:packbat
 authorization: re-authentication required on a new machine
 credentials: not included
 ```
 
-The fresh-machine block should not render today's S3-shaped `blotter init --yes ... --rclone-config default` line.
+The fresh-machine block should not render today's S3-shaped `packbat init --yes ... --rclone-config default` line.
 Until a provider-specific non-interactive init interface exists, it should say:
 
 ```text
 Fresh-machine setup
-Run blotter init, choose Google Drive, and authorize this destination in the browser.
-Use destination: blotter-drive:blotter
+Run packbat init, choose Google Drive, and authorize this destination in the browser.
+Use destination: packbat-drive:packbat
 The recovery kit intentionally contains no access token, refresh token, or OAuth client secret.
 ```
 
-For Dropbox substitute `Dropbox`. The bundled blotter client identity comes with blotter, not the kit. If a future
+For Dropbox substitute `Dropbox`. The bundled Packbat client identity comes with Packbat, not the kit. If a future
 own-client-ID lane is selected, the kit may record `oauth client: custom` as a non-secret hint, but the user must recover
 that client ID/secret from its separate secret store. Never serialize rclone's `token` JSON or the whole managed config.
 
 ## Throttle sanity
 
-Blotter runs one sweep per hour. A normal changed sweep copies a handful of new/changed encrypted files, then performs
+Packbat runs one sweep per hour. A normal changed sweep copies a handful of new/changed encrypted files, then performs
 one `copyto` for the encrypted index. Runs are low-volume, but timer alignment can create a shared-client burst, so both
 hourly average and one-minute concurrency matter.
 
@@ -397,7 +397,7 @@ Two bounds are useful:
   objects plus one index operation and each maps to one transaction, the arithmetic ceiling is about 6,000 users per
   hour. At three API transactions per object it is about 2,000. This is not a capacity promise because rclone performs
   discovery, metadata, session, and retry calls, and synchronized jobs consume the budget in bursts rather than evenly.
-- Blotter's timers currently align at minute `:03`. If every sweep's request burst lands inside the same minute, the
+- Packbat's timers currently align at minute `:03`. If every sweep's request burst lands inside the same minute, the
   legacy bound supplies only 600 transactions in that minute. The same six objects at one to three transactions each
   therefore yield a rough synchronized ceiling of 33 to 100 users, before allowing for rclone's extra discovery calls.
   This is the useful early-adopter ceiling until real quota deltas replace the assumptions. Hour-wide jitter restores
@@ -418,7 +418,7 @@ the hourly schedule, and rclone's built-in pacing/backoff.
 Dropbox does not publish a numerical request ceiling. It rate-limits per authorization, meaning per linked user for
 user links, and returns HTTP 429 `too_many_requests`; clients must honor `Retry-After` because rejected retries also
 count. Concurrent writes in one namespace can instead return `too_many_write_operations`
-([Dropbox: performance guide](https://developers.dropbox.com/dbx-performance-guide)). Since each blotter user has a
+([Dropbox: performance guide](https://developers.dropbox.com/dbx-performance-guide)). Since each Packbat user has a
 separate authorization and App Folder, the shared app key is not itself documented as one global request bucket.
 
 Dropbox recommends upload sessions and one batch commit to reduce namespace contention, with at most 1,000 entries per
@@ -444,7 +444,7 @@ deadline, despite the nominal 500-user development maximum. That is an approval 
    ([Dropbox: PKCE guidance](https://developers.dropbox.com/oauth-guide#implementing-pkce)).
 3. What quota-unit or API-call delta does one unchanged sweep and one five-file changed sweep actually consume, and how
    much jitter is needed before the shared Drive project reaches the synchronized-user bound?
-4. Which exact redacted rclone prefix survives through blotter's `rclone copy failed` wrapper after each real revoke,
+4. Which exact redacted rclone prefix survives through Packbat's `rclone copy failed` wrapper after each real revoke,
    and can doctor classify it without mistaking a network or provider outage for an invalid grant?
 
 ## Live-leg checklist

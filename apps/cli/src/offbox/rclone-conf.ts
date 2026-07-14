@@ -22,7 +22,7 @@ export function managedRcloneRemoteName(index: number): string {
 	if (!Number.isInteger(index) || index < 0) {
 		throw new Error("managed remote index must be a non-negative integer"); // DRAFT copy
 	}
-	return index === 0 ? "blotter" : `blotter-${index + 1}`;
+	return index === 0 ? "packbat" : `packbat-${index + 1}`;
 }
 
 export function renderS3Remote(input: S3RemoteInput, remoteName = managedRcloneRemoteName(0)): string {

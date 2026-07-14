@@ -52,7 +52,7 @@ afterEach(async () => {
 	await Promise.all(homes.splice(0).map((home) => rm(home, { recursive: true, force: true })));
 });
 
-describe("blotter retrieval", () => {
+describe("packbat retrieval", () => {
 	test("searches Claude turns and show keeps null and empty fields stable", async () => {
 		const test = await layout();
 		await writeArchivedJsonl({
@@ -224,7 +224,7 @@ describe("blotter retrieval", () => {
 			lines: [{ type: "user", message: { role: "user", content: "fresh reader text" } }],
 		});
 		await command(test, ["search", "fresh", "--json"]);
-		const databasePath = join(test.blotterHome, "cache", "retrieval.sqlite");
+		const databasePath = join(test.packbatHome, "cache", "retrieval.sqlite");
 		const database = new DatabaseSync(databasePath);
 		database.prepare("UPDATE turns SET text = 'stale cache text'").run();
 		database.prepare("UPDATE archive_files SET reader_version = 0").run();
@@ -308,9 +308,9 @@ describe("blotter retrieval", () => {
 		});
 		const first = await command(test, ["search", "--rebuild", "--json"]);
 		expect(first.code).toBe(0);
-		const databasePath = join(test.blotterHome, "cache", "retrieval.sqlite");
+		const databasePath = join(test.packbatHome, "cache", "retrieval.sqlite");
 		const before = await readFile(databasePath);
-		const cacheDirectory = join(test.blotterHome, "cache");
+		const cacheDirectory = join(test.packbatHome, "cache");
 		await writeArchivedJsonl({
 			layout: test,
 			harness: "claude-code",
@@ -370,7 +370,7 @@ describe("blotter retrieval", () => {
 			relPath: `-synthetic/${CLAUDE_ID}.jsonl`,
 			lines: [{ type: "user", message: { role: "user", content: "readable while a rebuild runs" } }],
 		});
-		const statePath = join(test.blotterHome, "state");
+		const statePath = join(test.packbatHome, "state");
 		await mkdir(statePath, { recursive: true });
 		// Hold the writer lock with this live test process's pid, as a rebuild would.
 		await writeFile(

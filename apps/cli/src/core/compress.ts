@@ -2,7 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { readFile, rename, rm, stat, utimes, writeFile } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 import * as zlib from "node:zlib";
-import { BlotterError } from "./errors.js";
+import { PackbatError } from "./errors.js";
 
 export interface CompressionResult {
 	sourceMtimeMs: number;
@@ -14,7 +14,7 @@ export interface CompressionResult {
 export function assertZstdSupport(): void {
 	if (typeof zlib.zstdCompressSync !== "function" || typeof zlib.zstdDecompressSync !== "function") {
 		// DRAFT copy
-		throw new BlotterError("zstd compression requires Node >= 22.16");
+		throw new PackbatError("zstd compression requires Node >= 22.16");
 	}
 }
 
