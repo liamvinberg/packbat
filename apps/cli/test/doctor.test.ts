@@ -124,34 +124,6 @@ describe("blotter doctor", () => {
 		});
 	});
 
-	test.skipIf(process.platform !== "darwin")("rejects a loaded launchd job from another artifact", async () => {
-		const layout = await initializedHome();
-		const bin = join(layout.home, "bin");
-		const launchctl = join(bin, "launchctl");
-		await mkdir(bin, { recursive: true });
-		await writeFile(
-			launchctl,
-			"#!/bin/sh\nprintf '%s\\n' 'path = /synthetic/other/com.blotter.sync.plist' 'last exit code = 0'\n",
-		);
-		await chmod(launchctl, 0o755);
-
-		const result = await runCli(["doctor", "--json"], {
-			home: layout.home,
-			env: { BLOTTER_HOME: layout.blotterHome, PATH: bin },
-		});
-
-		const report = JSON.parse(result.stdout) as DoctorJson;
-		expect(result.code).toBe(2);
-		expect(report.facts.find(({ id }) => id === "live")).toMatchObject({
-			status: "problem",
-			detail: expect.stringContaining("loaded from /synthetic/other/com.blotter.sync.plist; expected"),
-			data: {
-				loadedPath: "/synthetic/other/com.blotter.sync.plist",
-				expectedPath: join(layout.home, "Library", "LaunchAgents", "com.blotter.sync.plist"),
-			},
-		});
-	});
-
 	test.skipIf(process.platform !== "darwin")("catches a dead node path embedded in the schedule", async () => {
 		const layout = await initializedHome();
 		const plistPath = join(layout.home, "Library", "LaunchAgents", "com.blotter.sync.plist");

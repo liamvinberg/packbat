@@ -426,7 +426,12 @@ async function checkLaunchdLive(context: DoctorContext, schedule: InstalledSched
 	}
 	const expectedPath = schedule.artifactPaths[0] ?? "";
 	const loadedPath = parseLaunchdArtifactPath(result.stdout);
-	if (loadedPath !== null && loadedPath !== expectedPath) {
+	if (loadedPath === null) {
+		return fact("live", "problem", `launchd job artifact path is unavailable; expected ${expectedPath}`, {
+			expectedPath,
+		});
+	}
+	if (loadedPath !== expectedPath) {
 		return fact("live", "problem", `launchd job is loaded from ${loadedPath}; expected ${expectedPath}`, {
 			loadedPath,
 			expectedPath,
