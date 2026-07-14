@@ -4,7 +4,15 @@
  * consumes (unit, file set, newest mtime) and knows nothing harness-specific.
  */
 
-export type HarnessId = "claude-code" | "codex" | "pi";
+export const HARNESS_IDS = ["claude-code", "codex", "pi"] as const;
+
+export type HarnessId = (typeof HARNESS_IDS)[number];
+
+export const UUID_SOURCE = "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}";
+
+export function isHarnessId(value: unknown): value is HarnessId {
+	return typeof value === "string" && HARNESS_IDS.some((id) => id === value);
+}
 
 export type MutationModel = "append-file" | "rewrite-file" | "db-snapshot";
 

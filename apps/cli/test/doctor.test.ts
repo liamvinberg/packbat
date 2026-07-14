@@ -1,4 +1,4 @@
-import { appendFile, chmod, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { appendFile, chmod, mkdir, readFile, rm, utimes, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, describe, expect, test } from "vitest";
 import { appendJsonLine, makeClaudeStore, makeCodexStore, makePiStore } from "./helpers/fixtures.js";
@@ -24,7 +24,7 @@ interface DoctorJson {
 interface ReconciledData {
 	totals: { missing: number; stale: number; pending: number; orphaned: number };
 	harnesses: Record<string, { missing: number; stale: number; pending: number; orphaned: number }>;
-	indexDrift: { unindexed: number; missingFromTree: number; corruptLines: number };
+	indexDrift: { unindexed: number; missingFromTree: number; metadataMismatch: number; corruptLines: number };
 }
 
 afterEach(async () => {
@@ -56,6 +56,11 @@ describe("blotter doctor", () => {
 		const report = JSON.parse(result.stdout) as DoctorJson;
 		expect(report).toMatchObject({ v: 1, machine: expect.any(String), ok: result.code === 0 });
 		expect(report.facts.slice(0, 4).map(({ id }) => id)).toEqual(["installed", "live", "fresh", "reconciled"]);
+		expect(report.facts[4]).toMatchObject({
+			id: "retention",
+			status: "info",
+			detail: expect.stringContaining("claude-code: Claude Code deletes sessions older than cleanupPeriodDays"),
+		});
 		expect(report.facts.find(({ id }) => id === "installed")).toMatchObject({
 			title: "installed",
 			status: "ok",
@@ -187,6 +192,11 @@ describe("blotter doctor", () => {
 			status: "problem",
 			detail: "never succeeded",
 		});
+		const human = await runCli(["doctor"], {
+			home: layout.home,
+			env: { BLOTTER_HOME: layout.blotterHome },
+		});
+		expect(human.stdout).toContain("Claude Code's 30-day cleanup keeps running while sweeps fail");
 	});
 
 	test("classifies missing, stale, pending, orphaned, and index drift per harness", async () => {
@@ -239,6 +249,59 @@ describe("blotter doctor", () => {
 		expect(data.harnesses.codex).toMatchObject({ missing: 1, stale: 1 });
 		expect(data.harnesses.pi).toMatchObject({ pending: 1 });
 		expect(data.indexDrift).toMatchObject({ unindexed: 1, missingFromTree: 0, corruptLines: 1 });
+	});
+
+	test("treats indexed payload loss as a problem while other index drift stays informational", async () => {
+		const home = await makeTempHome();
+		homes.push(home);
+		const blotterHome = join(home, "blotter");
+		const archiveRoot = join(home, "archive");
+		const codexRoot = join(home, "stores", "codex");
+		const env = { BLOTTER_HOME: blotterHome, CODEX_HOME: codexRoot };
+		const first = await makeCodexStore(codexRoot, { mtimeMs: Date.now() - 60_000 });
+		await makeCodexStore(codexRoot, {
+			id: "44444444-4444-4444-8444-444444444444",
+			timestamp: "2026-01-03T03-04-05",
+			mtimeMs: Date.now() - 60_000,
+		});
+		expect(
+			(
+				await runCli(["init", "--yes", "--archive-root", archiveRoot, "--offbox", "skip", "--no-activate"], {
+					home,
+					env,
+				})
+			).code,
+		).toBe(0);
+		const config = JSON.parse(await readFile(join(blotterHome, "config.json"), "utf8")) as { machine: string };
+		const machineRoot = join(archiveRoot, config.machine);
+		const indexPath = join(machineRoot, "index.jsonl");
+		const records = (await readFile(indexPath, "utf8"))
+			.trimEnd()
+			.split("\n")
+			.map((line) => JSON.parse(line) as { path: string; sourceMtimeMs: number });
+		const unindexed = records.find((record) => record.path.endsWith(`${first.files[0]!.relPath}.zst`))!;
+		const mismatched = records.find((record) => record !== unindexed)!;
+		await writeFile(indexPath, `${JSON.stringify(mismatched)}\nnot-json\n`);
+		const newerStored = new Date(mismatched.sourceMtimeMs + 1_000);
+		await utimes(join(machineRoot, mismatched.path), newerStored, newerStored);
+
+		const informational = await runCli(["doctor", "--json"], { home, env });
+		const informationalReport = JSON.parse(informational.stdout) as DoctorJson;
+		const informationalFact = informationalReport.facts.find(({ id }) => id === "reconciled");
+		expect(informationalFact).toMatchObject({ status: "info" });
+		expect(informationalFact?.data).toMatchObject({
+			indexDrift: { unindexed: 1, missingFromTree: 0, metadataMismatch: 1, corruptLines: 1 },
+		});
+
+		await appendFile(indexPath, `${JSON.stringify({ ...mismatched, path: "codex/missing-payload.jsonl.zst" })}\n`);
+		const missing = await runCli(["doctor", "--json"], { home, env });
+		const missingReport = JSON.parse(missing.stdout) as DoctorJson;
+		expect(missing.code).toBe(2);
+		expect(missingReport.facts.find(({ id }) => id === "reconciled")).toMatchObject({
+			status: "problem",
+			detail: expect.stringContaining("archived payloads recorded in the index are missing from the tree"),
+			data: { indexDrift: { missingFromTree: 1 } },
+		});
 	});
 
 	test("reports configured off-box without a success stamp as a problem", async () => {

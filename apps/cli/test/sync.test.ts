@@ -71,6 +71,19 @@ afterEach(async () => {
 });
 
 describe("blotter sync", () => {
+	test("rejects arguments before reading config or creating archive state", async () => {
+		const layout = await makeLayout();
+		await writeConfig(layout);
+		await makeCodexStore(layout.codexRoot, { mtimeMs: SOURCE_MTIME_MS });
+
+		const result = await runCli(["sync", "--help"], { home: layout.home, env: layout.env });
+
+		expect(result.code).toBe(1);
+		expect(result.stdout).toBe("");
+		expect(result.stderr).toBe("Usage: blotter sync\n");
+		await expect(stat(layout.archiveRoot)).rejects.toMatchObject({ code: "ENOENT" });
+	});
+
 	test("archives every harness verbatim and a second sweep is unchanged", async () => {
 		const layout = await makeLayout();
 		await writeConfig(layout);
@@ -125,6 +138,51 @@ describe("blotter sync", () => {
 		for (const [destination, mtimeMs] of storedMtimes) {
 			expect((await stat(destination)).mtimeMs).toBe(mtimeMs);
 		}
+	});
+
+	test("rebuilds a missing index from committed payloads without touching them", async () => {
+		const layout = await makeLayout();
+		await writeConfig(layout);
+		const claude = await makeClaudeStore(layout.claudeRoot, { main: { mtimeMs: SOURCE_MTIME_MS } });
+		const codex = await makeCodexStore(layout.codexRoot, { mtimeMs: SOURCE_MTIME_MS + 1_000 });
+		const pi = await makePiStore(layout.piRoot, { mtimeMs: SOURCE_MTIME_MS + 2_000 });
+		const expected = [
+			...claude.files.map((file) => ({ harness: "claude-code", file })),
+			...codex.files.map((file) => ({ harness: "codex", file })),
+			...pi.files.map((file) => ({ harness: "pi", file })),
+		];
+		expect((await runCli(["sync"], { home: layout.home, env: layout.env })).code).toBe(0);
+		const storedMtimes = new Map(
+			await Promise.all(
+				expected.map(async ({ harness, file }) => {
+					const path = storedPath(layout, harness, file);
+					return [path, (await stat(path)).mtimeMs] as const;
+				}),
+			),
+		);
+		const indexPath = join(layout.archiveRoot, MACHINE, "index.jsonl");
+		await rm(indexPath);
+
+		const repaired = await runCli(["sync"], { home: layout.home, env: layout.env });
+
+		expect(repaired.code).toBe(0);
+		expect(repaired.stdout).toContain(`unchanged ${expected.length}, failed 0, repaired ${expected.length}`);
+		const rebuilt = await readFile(indexPath, "utf8");
+		expect(rebuilt.trim().split("\n")).toHaveLength(expected.length);
+		for (const { harness, file } of expected) {
+			expect(rebuilt).toContain(`"path":"${join(harness, `${file.relPath}.zst`)}"`);
+		}
+		for (const [path, mtimeMs] of storedMtimes) {
+			expect((await stat(path)).mtimeMs).toBe(mtimeMs);
+		}
+		expect(await readJson(join(layout.blotterHome, "state", "last-run.json"))).toMatchObject({
+			repaired: expected.length,
+		});
+		const listed = await runCli(["restore"], { home: layout.home, env: layout.env });
+		expect(listed.code).toBe(0);
+		expect(listed.stdout).toContain(claude.id);
+		expect(listed.stdout).toContain(codex.id);
+		expect(listed.stdout).toContain(pi.id);
 	});
 
 	test("supersedes grown Claude files but skips a changed source older than its archive", async () => {
@@ -214,6 +272,23 @@ describe("blotter sync", () => {
 		const lockPath = join(layout.blotterHome, "state", "sync.lock");
 		await mkdir(dirname(lockPath), { recursive: true });
 		await writeFile(lockPath, `${JSON.stringify({ pid: 99_999_999, startedAt: new Date().toISOString() })}\n`);
+
+		const result = await runCli(["sync"], { home: layout.home, env: layout.env });
+
+		expect(result.code).toBe(0);
+		expect(zstdDecompressSync(await readFile(storedPath(layout, "codex", codex.files[0]!)))).toEqual(
+			await readFile(codex.files[0]!.absPath),
+		);
+		await expect(stat(lockPath)).rejects.toMatchObject({ code: "ENOENT" });
+	});
+
+	test("removes an empty crash-artifact lock and proceeds", async () => {
+		const layout = await makeLayout();
+		await writeConfig(layout);
+		const codex = await makeCodexStore(layout.codexRoot, { mtimeMs: SOURCE_MTIME_MS });
+		const lockPath = join(layout.blotterHome, "state", "sync.lock");
+		await mkdir(dirname(lockPath), { recursive: true });
+		await writeFile(lockPath, "");
 
 		const result = await runCli(["sync"], { home: layout.home, env: layout.env });
 

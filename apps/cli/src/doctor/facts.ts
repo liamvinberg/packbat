@@ -1,13 +1,15 @@
 import { execFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { accessSync, constants } from "node:fs";
+import { constants } from "node:fs";
 import { access, mkdir, readFile, rm, statfs, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
-import { delimiter, join } from "node:path";
+import { join } from "node:path";
 import * as zlib from "node:zlib";
 import type { HarnessId } from "../adapters/adapter.js";
 import { adapters, unsupportedStores } from "../adapters/registry.js";
 import type { BlotterConfig } from "../core/config.js";
+import { commandOnPath } from "../core/exec.js";
+import { isEnoent, pathExists } from "../core/fs.js";
 import type { BlotterHome } from "../core/home.js";
 import { readIndex } from "../core/index.js";
 import type { RunStamp } from "../core/stamps.js";
@@ -87,40 +89,12 @@ export function createDoctorContext(
 	return { config, home, userHome: configuredHome ? configuredHome : homedir(), env, now };
 }
 
-async function pathExists(path: string): Promise<boolean> {
-	try {
-		await access(path, constants.F_OK);
-		return true;
-	} catch (error) {
-		if ((error as NodeJS.ErrnoException).code === "ENOENT") {
-			return false;
-		}
-		throw error;
-	}
-}
-
 async function command(commandPath: string, args: string[], env: NodeJS.ProcessEnv): Promise<CommandResult> {
 	return await new Promise((resolve) => {
 		execFile(commandPath, args, { encoding: "utf8", env }, (error, stdout, stderr) => {
 			resolve({ ok: error === null, stdout, stderr });
 		});
 	});
-}
-
-function commandOnPath(name: string, env: NodeJS.ProcessEnv): string | null {
-	for (const directory of (env.PATH ?? "").split(delimiter)) {
-		if (directory === "") {
-			continue;
-		}
-		const candidate = join(directory, name);
-		try {
-			accessSync(candidate, constants.X_OK);
-			return candidate;
-		} catch {
-			// Keep searching PATH.
-		}
-	}
-	return null;
 }
 
 function decodeXml(value: string): string {
@@ -135,6 +109,24 @@ function launchdArguments(contents: string): string[] | null {
 	return [...section.matchAll(/<string>([\s\S]*?)<\/string>/g)].map((match) => decodeXml(match[1] ?? ""));
 }
 
+function launchdEnvironment(contents: string): Map<string, string> | null {
+	const marker = "<key>EnvironmentVariables</key>";
+	if (!contents.includes(marker)) {
+		return new Map();
+	}
+	const section = /<key>EnvironmentVariables<\/key>\s*<dict>([\s\S]*?)<\/dict>/.exec(contents)?.[1];
+	if (section === undefined) {
+		return null;
+	}
+	const pairPattern = /<key>([\s\S]*?)<\/key>\s*<string>([\s\S]*?)<\/string>/g;
+	if (section.replace(pairPattern, "").trim() !== "") {
+		return null;
+	}
+	return new Map(
+		[...section.matchAll(pairPattern)].map((match) => [decodeXml(match[1] ?? ""), decodeXml(match[2] ?? "")]),
+	);
+}
+
 function decodeSystemdValue(value: string): string {
 	return value.replaceAll("%%", "%").replaceAll("\\n", "\n").replaceAll('\\"', '"').replaceAll("\\\\", "\\");
 }
@@ -146,6 +138,26 @@ function systemdArguments(contents: string): string[] | null {
 	}
 	const values = [...line.matchAll(/"((?:\\.|[^"])*)"/g)].map((match) => decodeSystemdValue(match[1] ?? ""));
 	return values.length === 3 ? values : null;
+}
+
+function systemdEnvironment(contents: string): Map<string, string> | null {
+	const environment = new Map<string, string>();
+	for (const line of contents.split("\n")) {
+		if (!line.startsWith("Environment=")) {
+			continue;
+		}
+		const encoded = /^Environment="((?:\\.|[^"])*)"$/.exec(line)?.[1];
+		if (encoded === undefined) {
+			return null;
+		}
+		const assignment = decodeSystemdValue(encoded);
+		const separator = assignment.indexOf("=");
+		if (separator <= 0) {
+			return null;
+		}
+		environment.set(assignment.slice(0, separator), assignment.slice(separator + 1));
+	}
+	return environment;
 }
 
 interface QuotedToken {
@@ -175,20 +187,29 @@ function shellQuotedToken(input: string, start: number): QuotedToken | null {
 	return null;
 }
 
-function cronArguments(contents: string): { nodePath: string; entryPath: string } | null {
+function cronArguments(
+	contents: string,
+): { nodePath: string; entryPath: string; environment: Map<string, string> } | null {
 	const line = contents.trimEnd();
 	const prefix = "3 * * * * ";
 	if (!line.startsWith(prefix) || !line.endsWith(` ${CRON_MARKER}`)) {
 		return null;
 	}
 	let index = prefix.length;
-	if (line.startsWith("BLOTTER_HOME=", index)) {
-		index += "BLOTTER_HOME=".length;
-		const home = shellQuotedToken(line, index);
-		if (home === null || line[home.next] !== " ") {
+	const environment = new Map<string, string>();
+	while (true) {
+		const assignment = /^([A-Z][A-Z0-9_]*)=/.exec(line.slice(index));
+		const key = assignment?.[1];
+		if (assignment === null || key === undefined) {
+			break;
+		}
+		index += assignment[0].length;
+		const value = shellQuotedToken(line, index);
+		if (value === null || line[value.next] !== " ") {
 			return null;
 		}
-		index = home.next + 1;
+		environment.set(key, value.value);
+		index = value.next + 1;
 	}
 	const node = shellQuotedToken(line, index);
 	if (node === null || line[node.next] !== " ") {
@@ -202,7 +223,7 @@ function cronArguments(contents: string): { nodePath: string; entryPath: string 
 	if (sync === null || sync.value !== "sync" || line.slice(sync.next) !== ` ${CRON_MARKER}`) {
 		return null;
 	}
-	return { nodePath: node.value, entryPath: entry.value };
+	return { nodePath: node.value, entryPath: entry.value, environment };
 }
 
 async function executablePathsExist(nodePath: string, entryPath: string): Promise<string[]> {
@@ -232,13 +253,14 @@ async function checkLaunchdInstalled(context: DoctorContext): Promise<InstalledC
 	try {
 		contents = await readFile(artifactPath, "utf8");
 	} catch (error) {
-		if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+		if (isEnoent(error)) {
 			return { fact: fact("installed", "problem", `missing ${artifactPath}`), schedule: null };
 		}
 		return { fact: fact("installed", "problem", `cannot read ${artifactPath}`), schedule: null };
 	}
 	const args = launchdArguments(contents);
-	if (args === null || args.length !== 3 || args[2] !== "sync") {
+	const environment = launchdEnvironment(contents);
+	if (args === null || environment === null || args.length !== 3 || args[2] !== "sync") {
 		return { fact: fact("installed", "problem", "launchd artifact does not match blotter's schedule"), schedule: null };
 	}
 	const nodePath = args[0] ?? "";
@@ -247,7 +269,7 @@ async function checkLaunchdInstalled(context: DoctorContext): Promise<InstalledC
 		nodePath,
 		entryPath,
 		logsPath: context.home.logsPath,
-		...(context.env.BLOTTER_HOME === undefined ? {} : { blotterHome: context.env.BLOTTER_HOME }),
+		environment,
 	});
 	const schedule: InstalledSchedule = { kind: "launchd", artifactPaths: [artifactPath], nodePath, entryPath };
 	if (contents !== expected) {
@@ -284,7 +306,8 @@ async function checkSystemdInstalled(context: DoctorContext): Promise<InstalledC
 		};
 	}
 	const args = systemdArguments(service);
-	if (args === null || args[2] !== "sync") {
+	const environment = systemdEnvironment(service);
+	if (args === null || environment === null || args[2] !== "sync") {
 		return { fact: fact("installed", "problem", "systemd artifacts do not match blotter's schedule"), schedule: null };
 	}
 	const nodePath = args[0] ?? "";
@@ -298,7 +321,7 @@ async function checkSystemdInstalled(context: DoctorContext): Promise<InstalledC
 	const expectedService = generateSystemdService({
 		nodePath,
 		entryPath,
-		...(context.env.BLOTTER_HOME === undefined ? {} : { blotterHome: context.env.BLOTTER_HOME }),
+		environment,
 	});
 	if (service !== expectedService || timer !== generateSystemdTimer()) {
 		return {
@@ -337,7 +360,7 @@ async function checkCronInstalled(context: DoctorContext): Promise<InstalledChec
 	const expected = `${generateCronEntry({
 		nodePath: args.nodePath,
 		entryPath: args.entryPath,
-		...(context.env.BLOTTER_HOME === undefined ? {} : { blotterHome: context.env.BLOTTER_HOME }),
+		environment: args.environment,
 	})}\n`;
 	if (contents !== expected) {
 		return {
@@ -361,8 +384,8 @@ export async function checkInstalled(context: DoctorContext): Promise<InstalledC
 	}
 	if (process.platform === "linux") {
 		const paths = systemdArtifactPaths(context.userHome);
-		const hasSystemdArtifact = (await pathExists(paths.service)) || (await pathExists(paths.timer));
-		const hasCronArtifact = await pathExists(join(context.home.statePath, "schedule.cron"));
+		const hasSystemdArtifact = pathExists(paths.service) || pathExists(paths.timer);
+		const hasCronArtifact = pathExists(join(context.home.statePath, "schedule.cron"));
 		if (hasSystemdArtifact && !hasCronArtifact) {
 			return await checkSystemdInstalled(context);
 		}
@@ -479,7 +502,8 @@ function isRunStamp(value: unknown): value is RunStamp {
 		typeof record.ok === "boolean" &&
 		typeof record.archived === "number" &&
 		typeof record.unchanged === "number" &&
-		typeof record.failed === "number"
+		typeof record.failed === "number" &&
+		(record.repaired === undefined || typeof record.repaired === "number")
 	);
 }
 
@@ -488,7 +512,7 @@ async function readStamp(path: string): Promise<StampRead> {
 	try {
 		raw = await readFile(path, "utf8");
 	} catch (error) {
-		if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+		if (isEnoent(error)) {
 			return { kind: "missing" };
 		}
 		return { kind: "invalid", detail: "unreadable" };
@@ -566,6 +590,27 @@ export async function checkFresh(context: DoctorContext): Promise<FreshCheck> {
 	};
 }
 
+export function retentionFact(): Fact {
+	const risks = adapters.flatMap((adapter) =>
+		adapter.retentionRisk === null
+			? []
+			: [
+					{
+						harness: adapter.id,
+						risk: adapter.retentionRisk,
+					},
+				],
+	);
+	return fact(
+		"retention",
+		"info",
+		risks
+			.map(({ harness, risk }) => `${harness}: ${risk.replace(/\.$/, "")} — the hourly sweep stays ahead of it`)
+			.join("\n"),
+		{ risks },
+	);
+}
+
 async function unsupportedStoreFacts(context: DoctorContext): Promise<Fact[]> {
 	const facts: Fact[] = [];
 	for (const store of unsupportedStores) {
@@ -587,7 +632,7 @@ async function storeReadabilityFact(context: DoctorContext): Promise<Fact> {
 			present.push(path);
 			await access(path, constants.R_OK);
 		} catch (error) {
-			if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+			if (!isEnoent(error)) {
 				unreadable.push(path);
 			}
 		}
@@ -667,7 +712,7 @@ export async function checkOffbox(context: DoctorContext): Promise<Fact> {
 	try {
 		value = JSON.parse(await readFile(path, "utf8")) as unknown;
 	} catch (error) {
-		if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+		if (isEnoent(error)) {
 			return fact("offbox", "problem", "off-box has never succeeded");
 		}
 		return fact("offbox", "problem", "offbox-last-success is unreadable or invalid");
@@ -716,7 +761,7 @@ export function remedyForFact(item: Fact): string {
 		return "re-run `blotter init` and inspect the scheduler";
 	}
 	if (item.id === "fresh") {
-		return "run `blotter sync` and inspect the log";
+		return "run `blotter sync` and inspect the log; Claude Code's 30-day cleanup keeps running while sweeps fail";
 	}
 	if (item.id === "reconciled") {
 		return "run `blotter sync`";

@@ -1,38 +1,10 @@
-import type { Dirent, Stats } from "node:fs";
-import { readdir, stat } from "node:fs/promises";
 import { join, relative, sep } from "node:path";
-import type { HarnessAdapter, SessionFile, SessionUnit } from "./adapter.js";
+import { readDirectoryOrEmpty, statOrNull } from "../core/fs.js";
+import { type HarnessAdapter, type SessionFile, type SessionUnit, UUID_SOURCE } from "./adapter.js";
 
-const UUID_SOURCE = "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}";
 const ROLLOUT_PATTERN = new RegExp(`^rollout-.+-(${UUID_SOURCE})\\.jsonl$`, "i");
 const YEAR_PATTERN = /^\d{4}$/;
 const MONTH_OR_DAY_PATTERN = /^\d{2}$/;
-
-function isEnoent(error: unknown): error is NodeJS.ErrnoException {
-	return error instanceof Error && "code" in error && error.code === "ENOENT";
-}
-
-async function readDirectory(path: string): Promise<Dirent[]> {
-	try {
-		return await readdir(path, { withFileTypes: true });
-	} catch (error) {
-		if (isEnoent(error)) {
-			return [];
-		}
-		throw error;
-	}
-}
-
-async function statPath(path: string): Promise<Stats | null> {
-	try {
-		return await stat(path);
-	} catch (error) {
-		if (isEnoent(error)) {
-			return null;
-		}
-		throw error;
-	}
-}
 
 function rolloutId(relPath: string): string | null {
 	const segments = relPath.split(sep);
@@ -57,7 +29,7 @@ function rolloutId(relPath: string): string | null {
 
 async function walkRollouts(storeRoot: string, directory: string): Promise<SessionUnit[]> {
 	const units: SessionUnit[] = [];
-	const entries = (await readDirectory(directory)).sort((left, right) => left.name.localeCompare(right.name));
+	const entries = (await readDirectoryOrEmpty(directory)).sort((left, right) => left.name.localeCompare(right.name));
 	for (const entry of entries) {
 		if (entry.name === ".DS_Store") {
 			continue;
@@ -75,7 +47,7 @@ async function walkRollouts(storeRoot: string, directory: string): Promise<Sessi
 		if (id === null) {
 			continue;
 		}
-		const stats = await statPath(absPath);
+		const stats = await statOrNull(absPath);
 		if (stats === null || !stats.isFile()) {
 			continue;
 		}

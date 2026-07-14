@@ -75,6 +75,12 @@ describe("blotter init", () => {
 	<dict>
 		<key>BLOTTER_HOME</key>
 		<string>${blotterHome}</string>
+		<key>CLAUDE_CONFIG_DIR</key>
+		<string>${claudeConfigDir}</string>
+		<key>CODEX_HOME</key>
+		<string>${codexRoot}</string>
+		<key>PI_CODING_AGENT_SESSION_DIR</key>
+		<string>${piRoot}</string>
 	</dict>
 	<key>StartCalendarInterval</key>
 	<dict>
@@ -110,6 +116,32 @@ describe("blotter init", () => {
 			failed: 0,
 		});
 	});
+
+	test.skipIf(process.platform !== "darwin")(
+		"persists a harness root override and doctor validates it without the installing environment",
+		async () => {
+			const home = await makeTempHome();
+			homes.push(home);
+			const blotterHome = join(home, "blotter");
+			const archiveRoot = join(home, "archive");
+			const claudeConfigDir = join(home, "custom claude");
+			const installed = await runCli(
+				["init", "--yes", "--archive-root", archiveRoot, "--offbox", "skip", "--no-activate"],
+				{ home, env: { BLOTTER_HOME: blotterHome, CLAUDE_CONFIG_DIR: claudeConfigDir } },
+			);
+			expect(installed.code).toBe(0);
+			const plistPath = join(home, "Library", "LaunchAgents", "com.blotter.sync.plist");
+			expect(await readFile(plistPath, "utf8")).toContain(
+				`<key>CLAUDE_CONFIG_DIR</key>\n\t\t<string>${claudeConfigDir}</string>`,
+			);
+
+			const checked = await runCli(["doctor", "--json"], { home, env: { BLOTTER_HOME: blotterHome } });
+			const report = JSON.parse(checked.stdout) as {
+				facts: Array<{ id: string; status: "ok" | "problem" | "info" }>;
+			};
+			expect(report.facts.find(({ id }) => id === "installed")).toMatchObject({ status: "ok" });
+		},
+	);
 
 	test("rejects a different archive root on re-init", async () => {
 		const home = await makeTempHome();

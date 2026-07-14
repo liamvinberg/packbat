@@ -7,7 +7,11 @@ describe("systemd artifacts", () => {
 			generateSystemdService({
 				nodePath: "/usr/local/bin/node",
 				entryPath: "/home/liam/blotter app/main.js",
-				blotterHome: "/home/liam/.blotter",
+				environment: new Map([
+					["BLOTTER_HOME", "/home/liam/.blotter"],
+					["CLAUDE_CONFIG_DIR", "/home/liam/Claude Code"],
+					["CODEX_HOME", "/home/liam/.codex"],
+				]),
 			}),
 		).toBe(`[Unit]
 Description=Archive AI agent sessions with blotter
@@ -16,6 +20,8 @@ Description=Archive AI agent sessions with blotter
 Type=oneshot
 ExecStart="/usr/local/bin/node" "/home/liam/blotter app/main.js" "sync"
 Environment="BLOTTER_HOME=/home/liam/.blotter"
+Environment="CLAUDE_CONFIG_DIR=/home/liam/Claude Code"
+Environment="CODEX_HOME=/home/liam/.codex"
 `);
 		expect(generateSystemdTimer()).toBe(`[Unit]
 Description=Run blotter sync hourly
@@ -30,8 +36,10 @@ WantedBy=timers.target
 `);
 	});
 
-	test("omits the service environment when blotter home is not set", () => {
-		expect(generateSystemdService({ nodePath: "/usr/bin/node", entryPath: "/opt/blotter/main.js" })).toBe(`[Unit]
+	test("omits the service environment when no overrides are set", () => {
+		expect(
+			generateSystemdService({ nodePath: "/usr/bin/node", entryPath: "/opt/blotter/main.js", environment: new Map() }),
+		).toBe(`[Unit]
 Description=Archive AI agent sessions with blotter
 
 [Service]

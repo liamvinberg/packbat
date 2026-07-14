@@ -9,6 +9,7 @@ export interface RunStamp {
 	archived: number;
 	unchanged: number;
 	failed: number;
+	repaired?: number;
 	offbox?: string;
 }
 

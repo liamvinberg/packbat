@@ -1,10 +1,13 @@
-import { execFile, spawn } from "node:child_process";
-import { accessSync, constants, lstatSync } from "node:fs";
+import { execFile, spawn, spawnSync } from "node:child_process";
+import { accessSync, constants } from "node:fs";
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
-import { delimiter, isAbsolute, join } from "node:path";
+import { isAbsolute, join } from "node:path";
 import { promisify } from "node:util";
 import { BlotterError } from "../core/errors.js";
+import { commandOnPath } from "../core/exec.js";
+import { pathExists } from "../core/fs.js";
 import { generateCronEntry, mergeCronTab, stripCronEntry } from "./cron.js";
+import type { ScheduleEnvironment } from "./environment.js";
 import { generateLaunchdPlist, LAUNCHD_LABEL } from "./launchd.js";
 import { generateSystemdService, generateSystemdTimer } from "./systemd.js";
 
@@ -18,7 +21,7 @@ export interface ScheduleInstallOptions {
 	logsPath: string;
 	nodePath: string;
 	entryPath: string;
-	blotterHome?: string;
+	environment: ScheduleEnvironment;
 	env: NodeJS.ProcessEnv;
 }
 
@@ -43,23 +46,7 @@ export interface ScheduleActivationOptions {
 	env: NodeJS.ProcessEnv;
 }
 
-type ScheduleKind = "launchd" | "systemd" | "cron";
-
-function commandOnPath(command: string, env: NodeJS.ProcessEnv): string | null {
-	for (const directory of (env.PATH ?? "").split(delimiter)) {
-		if (directory === "") {
-			continue;
-		}
-		const candidate = join(directory, command);
-		try {
-			accessSync(candidate, constants.X_OK);
-			return candidate;
-		} catch {
-			// Keep searching PATH.
-		}
-	}
-	return null;
-}
+export type ScheduleKind = "launchd" | "systemd" | "cron";
 
 function systemctlForRemoval(env: NodeJS.ProcessEnv): string | null {
 	const fromPath = commandOnPath("systemctl", env);
@@ -161,18 +148,6 @@ function activationMarkerPath(statePath: string): string {
 	return join(statePath, "schedule-activated");
 }
 
-function pathExists(path: string): boolean {
-	try {
-		lstatSync(path);
-		return true;
-	} catch (error) {
-		if ((error as NodeJS.ErrnoException).code === "ENOENT") {
-			return false;
-		}
-		throw error;
-	}
-}
-
 async function installLaunchd(options: ScheduleInstallOptions): Promise<ScheduleInstallResult> {
 	const path = launchdPath(options.userHome);
 	await mkdir(join(options.userHome, "Library", "LaunchAgents"), { recursive: true });
@@ -197,12 +172,18 @@ async function installCron(options: ScheduleInstallOptions): Promise<ScheduleIns
 	return { artifactPaths: [path], notes: [] };
 }
 
-function scheduleKind(env: NodeJS.ProcessEnv): ScheduleKind {
+export function scheduleKind(env: NodeJS.ProcessEnv): ScheduleKind {
 	if (process.platform === "darwin") {
 		return "launchd";
 	}
 	if (process.platform === "linux") {
-		return commandOnPath("systemctl", env) === null ? "cron" : "systemd";
+		const systemctl = commandOnPath("systemctl", env);
+		if (systemctl === null) {
+			return "cron";
+		}
+		return spawnSync(systemctl, ["--user", "show-environment"], { env, stdio: "ignore" }).status === 0
+			? "systemd"
+			: "cron";
 	}
 	throw new BlotterError(`scheduling is not supported on ${process.platform}`);
 }
@@ -342,13 +323,21 @@ async function activateCron(options: ScheduleActivationOptions): Promise<string[
 
 export async function activateSchedule(options: ScheduleActivationOptions): Promise<string[]> {
 	let notes: string[];
-	if (process.platform === "darwin") {
-		notes = await activateLaunchd(options);
-	} else if (process.platform === "linux") {
-		const systemctl = commandOnPath("systemctl", options.env);
-		notes = systemctl === null ? await activateCron(options) : await activateSystemd(options, systemctl);
-	} else {
-		throw new BlotterError(`scheduling is not supported on ${process.platform}`);
+	switch (scheduleKind(options.env)) {
+		case "launchd":
+			notes = await activateLaunchd(options);
+			break;
+		case "systemd": {
+			const systemctl = commandOnPath("systemctl", options.env);
+			if (systemctl === null) {
+				throw new BlotterError("systemd user manager became unavailable during schedule activation");
+			}
+			notes = await activateSystemd(options, systemctl);
+			break;
+		}
+		case "cron":
+			notes = await activateCron(options);
+			break;
 	}
 	await mkdir(options.statePath, { recursive: true });
 	await writeFile(activationMarkerPath(options.statePath), "active\n");

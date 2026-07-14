@@ -1,10 +1,10 @@
-import { randomUUID } from "node:crypto";
-import { mkdir, rename, rm, stat, utimes, writeFile } from "node:fs/promises";
+import { createHash, randomUUID } from "node:crypto";
+import { mkdir, readFile, rename, rm, stat, utimes, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import type { HarnessId } from "../adapters/adapter.js";
 import { getAdapter } from "../adapters/registry.js";
-import { decompressFile } from "./compress.js";
+import { decompressBytes } from "./compress.js";
 import type { BlotterConfig } from "./config.js";
 import { BlotterError, errorMessage } from "./errors.js";
 import { type ArchiveIndexRecord, readIndex } from "./index.js";
@@ -190,9 +190,19 @@ async function liveMtime(path: string): Promise<number | null> {
 }
 
 async function writeRestoredFile(plan: RestorePlan): Promise<void> {
+	let archivedBytes: Buffer;
+	try {
+		archivedBytes = await readFile(plan.file.archivePath);
+	} catch (error) {
+		throw new BlotterError(`could not read archived file ${plan.file.archivePath}: ${errorMessage(error)}`);
+	}
+	const actualSha256 = createHash("sha256").update(archivedBytes).digest("hex");
+	if (actualSha256 !== plan.file.record.sha256) {
+		throw new BlotterError(`archived file is corrupt: ${plan.file.archivePath} (sha256 mismatch)`);
+	}
 	let bytes: Buffer;
 	try {
-		bytes = await decompressFile(plan.file.archivePath);
+		bytes = decompressBytes(archivedBytes);
 	} catch (error) {
 		throw new BlotterError(`could not read archived file ${plan.file.archivePath}: ${errorMessage(error)}`);
 	}

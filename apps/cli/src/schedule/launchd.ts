@@ -1,4 +1,5 @@
 import { join } from "node:path";
+import type { ScheduleEnvironment } from "./environment.js";
 
 export const LAUNCHD_LABEL = "com.blotter.sync";
 
@@ -6,7 +7,7 @@ export interface LaunchdArtifactOptions {
 	nodePath: string;
 	entryPath: string;
 	logsPath: string;
-	blotterHome?: string;
+	environment: ScheduleEnvironment;
 }
 
 function escapeXmlText(value: string): string {
@@ -15,9 +16,11 @@ function escapeXmlText(value: string): string {
 
 export function generateLaunchdPlist(options: LaunchdArtifactOptions): string {
 	const environment =
-		options.blotterHome === undefined
+		options.environment.size === 0
 			? ""
-			: `\t<key>EnvironmentVariables</key>\n\t<dict>\n\t\t<key>BLOTTER_HOME</key>\n\t\t<string>${escapeXmlText(options.blotterHome)}</string>\n\t</dict>\n`;
+			: `\t<key>EnvironmentVariables</key>\n\t<dict>\n${[...options.environment]
+					.map(([key, value]) => `\t\t<key>${escapeXmlText(key)}</key>\n\t\t<string>${escapeXmlText(value)}</string>\n`)
+					.join("")}\t</dict>\n`;
 	const logPath = escapeXmlText(join(options.logsPath, "launchd.log"));
 	return `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">

@@ -7,6 +7,8 @@ import { appendLog } from "../core/log.js";
 import { writeRunStamps } from "../core/stamps.js";
 import { publishOffbox, remindOffboxSkipped } from "../offbox/outbox.js";
 
+const USAGE = "Usage: blotter sync\n";
+
 export interface SyncOutputOptions {
 	writeSummary?: boolean;
 	onSummary?: (summary: string) => void;
@@ -20,7 +22,11 @@ function reportSummary(summary: string, options: SyncOutputOptions): void {
 	}
 }
 
-export async function runSync(_argv: string[], output: SyncOutputOptions = {}): Promise<number> {
+export async function runSync(argv: string[], output: SyncOutputOptions = {}): Promise<number> {
+	if (argv.length > 0) {
+		process.stderr.write(USAGE);
+		return 1;
+	}
 	const home = resolveHome();
 	const config = loadConfig(home);
 	assertZstdSupport();
@@ -29,6 +35,7 @@ export async function runSync(_argv: string[], output: SyncOutputOptions = {}): 
 		let archived = 0;
 		let unchanged = 0;
 		let failed = 0;
+		let repaired = 0;
 		let errors: string[] = [];
 		let offboxError: string | undefined;
 		try {
@@ -36,6 +43,7 @@ export async function runSync(_argv: string[], output: SyncOutputOptions = {}): 
 			archived = result.archived;
 			unchanged = result.unchanged;
 			failed = result.failed;
+			repaired = result.repaired;
 			errors = result.errors;
 		} catch (error) {
 			failed = 1;
@@ -54,7 +62,7 @@ export async function runSync(_argv: string[], output: SyncOutputOptions = {}): 
 			}
 		}
 		const finishedAt = new Date().toISOString();
-		const summary = `archived ${archived}, unchanged ${unchanged}, failed ${failed}`;
+		const summary = `archived ${archived}, unchanged ${unchanged}, failed ${failed}${repaired > 0 ? `, repaired ${repaired}` : ""}`;
 		await writeRunStamps(home.statePath, {
 			startedAt,
 			finishedAt,
@@ -62,6 +70,7 @@ export async function runSync(_argv: string[], output: SyncOutputOptions = {}): 
 			archived,
 			unchanged,
 			failed,
+			repaired,
 			...(offboxError === undefined ? {} : { offbox: offboxError }),
 		});
 		await appendLog(home.logsPath, summary, new Date(finishedAt));

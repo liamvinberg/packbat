@@ -1,41 +1,15 @@
-import type { Dirent, Stats } from "node:fs";
-import { readdir, stat } from "node:fs/promises";
 import { join, relative } from "node:path";
-import type { HarnessAdapter, SessionFile, SessionUnit } from "./adapter.js";
+import { readDirectoryOrEmpty, statOrNull } from "../core/fs.js";
+import { type HarnessAdapter, type SessionFile, type SessionUnit, UUID_SOURCE } from "./adapter.js";
 
-const UUID_SOURCE = "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}";
 const SANITIZED_ISO_SOURCE = "\\d{4}-\\d{2}-\\d{2}T\\d{2}-\\d{2}-\\d{2}-\\d{3}Z";
 const SESSION_PATTERN = new RegExp(`^${SANITIZED_ISO_SOURCE}_(${UUID_SOURCE})\\.jsonl$`, "i");
 
-function isEnoent(error: unknown): error is NodeJS.ErrnoException {
-	return error instanceof Error && "code" in error && error.code === "ENOENT";
-}
-
-async function readDirectory(path: string): Promise<Dirent[]> {
-	try {
-		return await readdir(path, { withFileTypes: true });
-	} catch (error) {
-		if (isEnoent(error)) {
-			return [];
-		}
-		throw error;
-	}
-}
-
-async function statPath(path: string): Promise<Stats | null> {
-	try {
-		return await stat(path);
-	} catch (error) {
-		if (isEnoent(error)) {
-			return null;
-		}
-		throw error;
-	}
-}
-
 async function enumerateProject(storeRoot: string, projectDirectory: string): Promise<SessionUnit[]> {
 	const units: SessionUnit[] = [];
-	const entries = (await readDirectory(projectDirectory)).sort((left, right) => left.name.localeCompare(right.name));
+	const entries = (await readDirectoryOrEmpty(projectDirectory)).sort((left, right) =>
+		left.name.localeCompare(right.name),
+	);
 	for (const entry of entries) {
 		if (entry.name === ".DS_Store" || !entry.isFile()) {
 			continue;
@@ -45,7 +19,7 @@ async function enumerateProject(storeRoot: string, projectDirectory: string): Pr
 			continue;
 		}
 		const absPath = join(projectDirectory, entry.name);
-		const stats = await statPath(absPath);
+		const stats = await statOrNull(absPath);
 		if (stats === null || !stats.isFile()) {
 			continue;
 		}
@@ -71,7 +45,7 @@ export const piAdapter: HarnessAdapter = {
 	},
 	async enumerate(storeRoot) {
 		const units: SessionUnit[] = [];
-		const projects = (await readDirectory(storeRoot)).sort((left, right) => left.name.localeCompare(right.name));
+		const projects = (await readDirectoryOrEmpty(storeRoot)).sort((left, right) => left.name.localeCompare(right.name));
 		for (const project of projects) {
 			if (project.name === ".DS_Store" || !project.isDirectory()) {
 				continue;

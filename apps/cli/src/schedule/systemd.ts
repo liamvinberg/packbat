@@ -1,7 +1,9 @@
+import type { ScheduleEnvironment } from "./environment.js";
+
 export interface SystemdServiceOptions {
 	nodePath: string;
 	entryPath: string;
-	blotterHome?: string;
+	environment: ScheduleEnvironment;
 }
 
 function quoteSystemdValue(value: string): string {
@@ -9,10 +11,9 @@ function quoteSystemdValue(value: string): string {
 }
 
 export function generateSystemdService(options: SystemdServiceOptions): string {
-	const environment =
-		options.blotterHome === undefined
-			? ""
-			: `Environment=${quoteSystemdValue(`BLOTTER_HOME=${options.blotterHome}`)}\n`;
+	const environment = [...options.environment]
+		.map(([key, value]) => `Environment=${quoteSystemdValue(`${key}=${value}`)}\n`)
+		.join("");
 	return `[Unit]
 Description=Archive AI agent sessions with blotter
 

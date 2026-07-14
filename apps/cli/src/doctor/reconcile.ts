@@ -1,9 +1,9 @@
-import type { Dirent } from "node:fs";
-import { access, readdir, stat } from "node:fs/promises";
+import { stat } from "node:fs/promises";
 import { join, relative, sep } from "node:path";
-import type { HarnessId, SessionFile } from "../adapters/adapter.js";
+import { HARNESS_IDS, type HarnessId, isHarnessId, type SessionFile } from "../adapters/adapter.js";
 import { adapters } from "../adapters/registry.js";
 import { shouldArchive } from "../core/archive.js";
+import { readDirectoryOrEmpty, statOrNull } from "../core/fs.js";
 import { type IndexContents, readIndex } from "../core/index.js";
 import type { DoctorContext, Fact } from "./facts.js";
 import { ageMs, windowMs } from "./facts.js";
@@ -36,23 +36,14 @@ function emptyHarness(): HarnessReconciliation {
 }
 
 function harnessRecord(): Record<HarnessId, HarnessReconciliation> {
-	return {
-		"claude-code": emptyHarness(),
-		codex: emptyHarness(),
-		pi: emptyHarness(),
-	};
+	return Object.fromEntries(HARNESS_IDS.map((harness) => [harness, emptyHarness()])) as Record<
+		HarnessId,
+		HarnessReconciliation
+	>;
 }
 
 async function walkFiles(root: string): Promise<string[]> {
-	let entries: Dirent[];
-	try {
-		entries = await readdir(root, { withFileTypes: true });
-	} catch (error) {
-		if ((error as NodeJS.ErrnoException).code === "ENOENT") {
-			return [];
-		}
-		throw error;
-	}
+	const entries = await readDirectoryOrEmpty(root);
 	const files: string[] = [];
 	for (const entry of entries) {
 		const path = join(root, entry.name);
@@ -66,26 +57,11 @@ async function walkFiles(root: string): Promise<string[]> {
 }
 
 async function storedMtime(path: string): Promise<number | null> {
-	try {
-		return (await stat(path)).mtimeMs;
-	} catch (error) {
-		if ((error as NodeJS.ErrnoException).code === "ENOENT") {
-			return null;
-		}
-		throw error;
-	}
+	return (await statOrNull(path))?.mtimeMs ?? null;
 }
 
 async function sourceExists(path: string): Promise<boolean> {
-	try {
-		await access(path);
-		return true;
-	} catch (error) {
-		if ((error as NodeJS.ErrnoException).code === "ENOENT") {
-			return false;
-		}
-		throw error;
-	}
+	return (await statOrNull(path)) !== null;
 }
 
 function archivedSourcePath(
@@ -94,7 +70,7 @@ function archivedSourcePath(
 ): { harness: HarnessId; sourcePath: string } | null {
 	const parts = archiveRelativePath.split(sep);
 	const harness = parts.shift();
-	if (harness !== "claude-code" && harness !== "codex" && harness !== "pi") {
+	if (!isHarnessId(harness)) {
 		return null;
 	}
 	const last = parts.at(-1);
@@ -171,7 +147,7 @@ export async function checkReconciled(context: DoctorContext): Promise<Fact> {
 	const treeSet = new Set(treeRelative);
 	for (const archiveRelativePath of treeRelative) {
 		const harness = archiveRelativePath.split(sep, 1)[0];
-		if (harness === "claude-code" || harness === "codex" || harness === "pi") {
+		if (isHarnessId(harness)) {
 			harnesses[harness].archived += 1;
 		}
 	}
@@ -262,7 +238,11 @@ export async function checkReconciled(context: DoctorContext): Promise<Fact> {
 	const driftCount =
 		indexDrift.unindexed + indexDrift.missingFromTree + indexDrift.metadataMismatch + indexDrift.corruptLines;
 	const hasProblem =
-		totals.missing > 0 || totals.stale > 0 || enumerationErrors.length > 0 || reconciliationErrors.length > 0;
+		totals.missing > 0 ||
+		totals.stale > 0 ||
+		indexDrift.missingFromTree > 0 ||
+		enumerationErrors.length > 0 ||
+		reconciliationErrors.length > 0;
 	const hasInfo = totals.pending > 0 || totals.orphaned > 0 || driftCount > 0;
 	const details = anomalyDetail(harnesses);
 	if (enumerationErrors.length > 0) {
@@ -273,6 +253,9 @@ export async function checkReconciled(context: DoctorContext): Promise<Fact> {
 	}
 	if (driftCount > 0) {
 		details.push(`index drift: ${driftCount}`);
+	}
+	if (indexDrift.missingFromTree > 0) {
+		details.push("archived payloads recorded in the index are missing from the tree");
 	}
 	const detail =
 		details.length === 0

@@ -1,5 +1,5 @@
 import { appendFile, readFile } from "node:fs/promises";
-import type { FileRole, HarnessId } from "../adapters/adapter.js";
+import { type FileRole, type HarnessId, isHarnessId } from "../adapters/adapter.js";
 
 export interface ArchiveIndexRecord {
 	v: 1;
@@ -29,7 +29,7 @@ function isArchiveIndexRecord(value: unknown): value is ArchiveIndexRecord {
 	return (
 		record.v === 1 &&
 		typeof record.path === "string" &&
-		(record.harness === "claude-code" || record.harness === "codex" || record.harness === "pi") &&
+		isHarnessId(record.harness) &&
 		typeof record.machine === "string" &&
 		typeof record.unit === "string" &&
 		(record.role === "main" || record.role === "sidecar") &&

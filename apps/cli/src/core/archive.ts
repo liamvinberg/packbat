@@ -1,7 +1,8 @@
-import { mkdir, stat } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { mkdir, readFile, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
-import type { HarnessId, SessionUnit } from "../adapters/adapter.js";
+import { HARNESS_IDS, type HarnessId, type SessionUnit } from "../adapters/adapter.js";
 import { adapters } from "../adapters/registry.js";
 import { compressFile } from "./compress.js";
 import type { BlotterConfig } from "./config.js";
@@ -22,6 +23,7 @@ export interface ArchiveCounts {
 }
 
 export interface SweepResult extends ArchiveCounts {
+	repaired: number;
 	perHarness: Record<HarnessId, ArchiveCounts>;
 	errors: string[];
 }
@@ -56,6 +58,10 @@ function emptyCounts(): ArchiveCounts {
 	return { archived: 0, unchanged: 0, failed: 0 };
 }
 
+function emptyPerHarness(): Record<HarnessId, ArchiveCounts> {
+	return Object.fromEntries(HARNESS_IDS.map((harness) => [harness, emptyCounts()])) as Record<HarnessId, ArchiveCounts>;
+}
+
 function increment(result: SweepResult, harness: HarnessId, field: keyof ArchiveCounts): void {
 	result[field] += 1;
 	result.perHarness[harness][field] += 1;
@@ -69,11 +75,8 @@ function userHome(env: NodeJS.ProcessEnv): string {
 export async function sweep(config: BlotterConfig, env: NodeJS.ProcessEnv): Promise<SweepResult> {
 	const result: SweepResult = {
 		...emptyCounts(),
-		perHarness: {
-			"claude-code": emptyCounts(),
-			codex: emptyCounts(),
-			pi: emptyCounts(),
-		},
+		repaired: 0,
+		perHarness: emptyPerHarness(),
 		errors: [],
 	};
 	const machinePath = join(config.archiveRoot, config.machine);
@@ -95,14 +98,35 @@ export async function sweep(config: BlotterConfig, env: NodeJS.ProcessEnv): Prom
 				const destination = join(machinePath, relativePath);
 				try {
 					const currentIndexRecord = index.records.get(relativePath);
+					const stored = await storedFile(destination);
 					if (
 						!shouldArchive({
 							sourceMtimeMs: file.mtimeMs,
 							sourceSize: file.sizeBytes,
-							stored: await storedFile(destination),
+							stored,
 							indexSourceSize: currentIndexRecord?.sourceSize,
 						})
 					) {
+						if (stored !== null && currentIndexRecord?.sourceMtimeMs !== stored.mtimeMs) {
+							const storedBytes = await readFile(destination);
+							const record: ArchiveIndexRecord = {
+								v: 1,
+								path: relativePath,
+								harness: adapter.id,
+								machine: config.machine,
+								unit: unit.id,
+								role: file.role,
+								source: file.absPath,
+								sourceMtimeMs: stored.mtimeMs,
+								sourceSize: file.sizeBytes,
+								storedSize: storedBytes.byteLength,
+								sha256: createHash("sha256").update(storedBytes).digest("hex"),
+								archivedAt: new Date().toISOString(),
+							};
+							await appendIndex(indexPath, record);
+							index.records.set(relativePath, record);
+							result.repaired += 1;
+						}
 						increment(result, adapter.id, "unchanged");
 						continue;
 					}

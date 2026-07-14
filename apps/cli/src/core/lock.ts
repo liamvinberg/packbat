@@ -1,5 +1,5 @@
-import type { FileHandle } from "node:fs/promises";
-import { mkdir, open, readFile, rm } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
+import { link, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 export type SyncLockResult<T> = { acquired: true; value: T } | { acquired: false };
@@ -44,24 +44,21 @@ async function lockOwnerIsAlive(path: string): Promise<boolean> {
 }
 
 async function tryAcquire(path: string): Promise<boolean> {
-	let handle: FileHandle;
-	try {
-		handle = await open(path, "wx");
-	} catch (error) {
-		if ((error as NodeJS.ErrnoException).code === "EEXIST") {
-			return false;
-		}
-		throw error;
-	}
 	const contents: LockContents = { pid: process.pid, startedAt: new Date().toISOString() };
+	const temporary = `${path}.tmp-${process.pid}-${randomUUID()}`;
 	try {
-		await handle.writeFile(`${JSON.stringify(contents)}\n`);
-	} catch (error) {
-		await handle.close();
-		await rm(path, { force: true });
-		throw error;
+		await writeFile(temporary, `${JSON.stringify(contents)}\n`, { flag: "wx" });
+		try {
+			await link(temporary, path);
+		} catch (error) {
+			if ((error as NodeJS.ErrnoException).code === "EEXIST") {
+				return false;
+			}
+			throw error;
+		}
+	} finally {
+		await rm(temporary, { force: true });
 	}
-	await handle.close();
 	return true;
 }
 

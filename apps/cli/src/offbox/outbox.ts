@@ -2,11 +2,12 @@ import { randomUUID } from "node:crypto";
 import { appendFile, mkdir, readdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { basename, dirname, join, relative } from "node:path";
 import type { BlotterConfig, OffboxConfig } from "../core/config.js";
+import { BlotterError } from "../core/errors.js";
 import type { BlotterHome } from "../core/home.js";
 import { appendLog } from "../core/log.js";
 import { writeAtomicJson } from "../core/stamps.js";
 import { encryptToRecipient } from "./age.js";
-import { copyFile, copyTree, joinRcloneDestination } from "./rclone.js";
+import { copyFile, copyTree, joinRcloneDestination, remoteFileExists } from "./rclone.js";
 
 const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
 const REMINDER = "If this laptop dies, sessions not copied off-box die with it.";
@@ -119,6 +120,12 @@ export async function publishOffbox(home: BlotterHome, config: BlotterConfig, of
 
 	const uploadedPath = join(home.statePath, "offbox-uploaded.jsonl");
 	const uploaded = await readUploadedRecords(uploadedPath);
+	const remoteIndexPath = joinRcloneDestination(offbox.remote.destination, `${config.machine}/index.jsonl.age`);
+	if (uploaded.size === 0 && (await remoteFileExists(remoteIndexPath, offbox.remote.rcloneConfig))) {
+		throw new BlotterError(
+			`an archive for machine \`${config.machine}\` already exists at the remote; restore it first (\`blotter restore --from-remote --identity <kit-file>\`) or change \`machine\` in config.json.`,
+		);
+	}
 	const archiveFiles = await walkArchiveFiles(machinePath, config.machine);
 	const changed = archiveFiles.filter((file) => {
 		const previous = uploaded.get(file.path);
@@ -143,11 +150,7 @@ export async function publishOffbox(home: BlotterHome, config: BlotterConfig, of
 
 	const encryptedIndexPath = join(outboxPath, config.machine, "index.jsonl.age");
 	await encryptFile(indexPath, encryptedIndexPath, offbox.recipient);
-	await copyFile(
-		encryptedIndexPath,
-		joinRcloneDestination(offbox.remote.destination, `${config.machine}/index.jsonl.age`),
-		offbox.remote.rcloneConfig,
-	);
+	await copyFile(encryptedIndexPath, remoteIndexPath, offbox.remote.rcloneConfig);
 
 	const finishedAt = new Date().toISOString();
 	if (changed.length > 0) {

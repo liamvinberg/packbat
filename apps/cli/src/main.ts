@@ -37,6 +37,17 @@ function version(): string {
 	return pkg.version;
 }
 
+// Piping into `head` (or any consumer that closes early) must end the process
+// quietly, not crash it.
+for (const stream of [process.stdout, process.stderr]) {
+	stream.on("error", (error: NodeJS.ErrnoException) => {
+		if (error.code === "EPIPE") {
+			process.exit(0);
+		}
+		throw error;
+	});
+}
+
 async function main(argv: string[]): Promise<number> {
 	const [first, ...rest] = argv;
 	if (first === undefined || first === "--help" || first === "-h") {

@@ -9,6 +9,7 @@ import {
 	createDoctorContext,
 	type Fact,
 	remedyForFact,
+	retentionFact,
 } from "../doctor/facts.js";
 import { checkReconciled } from "../doctor/reconcile.js";
 
@@ -64,7 +65,7 @@ export async function runDoctor(argv: string[]): Promise<number> {
 		checkReconciled(context),
 	]);
 	const environment = await collectEnvironmentFacts(context);
-	const facts = [installed.fact, live, fresh.fact, reconciled, ...environment];
+	const facts = [installed.fact, live, fresh.fact, reconciled, retentionFact(), ...environment];
 	const ok = !facts.some((item) => item.status === "problem");
 	if (options.json) {
 		process.stdout.write(`${JSON.stringify({ v: 1, ok, machine: config.machine, facts })}\n`);

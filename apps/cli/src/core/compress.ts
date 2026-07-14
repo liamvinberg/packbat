@@ -40,6 +40,10 @@ export async function compressFile(source: string, destination: string): Promise
 }
 
 export async function decompressFile(source: string): Promise<Buffer> {
+	return decompressBytes(await readFile(source));
+}
+
+export function decompressBytes(bytes: Buffer): Buffer {
 	assertZstdSupport();
-	return zlib.zstdDecompressSync(await readFile(source));
+	return zlib.zstdDecompressSync(bytes);
 }

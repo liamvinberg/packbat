@@ -1,5 +1,5 @@
 import { execFileSync, spawnSync } from "node:child_process";
-import { readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { join, relative } from "node:path";
 import { afterEach, describe, expect, test } from "vitest";
 import { decryptWithIdentity, encryptToRecipient, generateIdentity, identityToRecipient } from "../src/offbox/age.js";
@@ -9,6 +9,9 @@ import { makeTempHome, runCli } from "./helpers/run-cli.js";
 
 const SOURCE_MTIME_MS = Date.UTC(2026, 0, 2, 3, 4, 5);
 const hasRclone = spawnSync("rclone", ["version"], { stdio: "ignore" }).status === 0;
+const hasWellKnownRclone = ["/opt/homebrew/bin/rclone", "/usr/local/bin/rclone", "/usr/bin/rclone"].some(
+	(path) => spawnSync(path, ["version"], { stdio: "ignore" }).status === 0,
+);
 const hasAgeBinary = spawnSync("age", ["--version"], { stdio: "ignore" }).status === 0;
 const homes: string[] = [];
 
@@ -83,44 +86,47 @@ describe("off-box configuration", () => {
 		expect(missingRemote.stderr).toContain("--offbox remote requires --offbox-remote");
 	});
 
-	test("keeps local success true and reports an off-box failure when rclone is absent", async () => {
-		const layout = await makeLayout();
-		const identity = await generateIdentity();
-		const recipient = await identityToRecipient(identity);
-		await makeClaudeStore(layout.claudeRoot, { main: { mtimeMs: SOURCE_MTIME_MS }, sidecars: [] });
-		await writeFile(
-			join(layout.home, "config.json"),
-			`${JSON.stringify({
-				version: 1,
-				machine: "test-machine",
-				archiveRoot: layout.archiveRoot,
-				sweep: { intervalMinutes: 60 },
-				offbox: {
-					mode: "configured",
-					recipient,
-					remote: { destination: layout.remote, rcloneConfig: "default" },
-				},
-			})}\n`,
-		);
+	test.skipIf(hasWellKnownRclone)(
+		"keeps local success true and reports an off-box failure when rclone is absent",
+		async () => {
+			const layout = await makeLayout();
+			const identity = await generateIdentity();
+			const recipient = await identityToRecipient(identity);
+			await makeClaudeStore(layout.claudeRoot, { main: { mtimeMs: SOURCE_MTIME_MS }, sidecars: [] });
+			await writeFile(
+				join(layout.home, "config.json"),
+				`${JSON.stringify({
+					version: 1,
+					machine: "test-machine",
+					archiveRoot: layout.archiveRoot,
+					sweep: { intervalMinutes: 60 },
+					offbox: {
+						mode: "configured",
+						recipient,
+						remote: { destination: layout.remote, rcloneConfig: "default" },
+					},
+				})}\n`,
+			);
 
-		const result = await runCli(["sync"], {
-			home: layout.home,
-			env: { ...layout.env, BLOTTER_HOME: layout.home, PATH: "" },
-		});
+			const result = await runCli(["sync"], {
+				home: layout.home,
+				env: { ...layout.env, BLOTTER_HOME: layout.home, PATH: "" },
+			});
 
-		expect(result.code).toBe(1);
-		expect(result.stderr).toContain("rclone was not found on PATH");
-		expect(result.stderr).toContain("brew install rclone");
-		expect(result.stderr).toContain("apt install rclone");
-		const stamp = JSON.parse(await readFile(join(layout.home, "state", "last-run.json"), "utf8")) as Record<
-			string,
-			unknown
-		>;
-		expect(stamp).toMatchObject({ ok: true, archived: 1, offbox: expect.stringContaining("rclone") });
-		expect(JSON.parse(await readFile(join(layout.home, "state", "last-success.json"), "utf8"))).toEqual(stamp);
-		expect(await readFile(join(layout.home, "logs", "blotter.log"), "utf8")).toContain("off-box failed");
-		expect((await listFiles(join(layout.home, "state", "outbox"))).some((path) => path.endsWith(".age"))).toBe(true);
-	});
+			expect(result.code).toBe(1);
+			expect(result.stderr).toContain("rclone was not found on PATH");
+			expect(result.stderr).toContain("brew install rclone");
+			expect(result.stderr).toContain("apt install rclone");
+			const stamp = JSON.parse(await readFile(join(layout.home, "state", "last-run.json"), "utf8")) as Record<
+				string,
+				unknown
+			>;
+			expect(stamp).toMatchObject({ ok: true, archived: 1, offbox: expect.stringContaining("rclone") });
+			expect(JSON.parse(await readFile(join(layout.home, "state", "last-success.json"), "utf8"))).toEqual(stamp);
+			expect(await readFile(join(layout.home, "logs", "blotter.log"), "utf8")).toContain("off-box failed");
+			expect((await listFiles(join(layout.home, "state", "outbox"))).some((path) => path.endsWith(".age"))).toBe(true);
+		},
+	);
 
 	test("logs the skipped off-box risk at most once per week and never to stdout", async () => {
 		const layout = await makeLayout();
@@ -166,6 +172,46 @@ describe.skipIf(!hasAgeBinary)("age CLI interoperability", () => {
 });
 
 describe.skipIf(!hasRclone)("off-box archive cycle", () => {
+	test("refuses a fresh install that would overwrite another machine archive", async () => {
+		const first = await makeLayout();
+		const second = await makeLayout();
+		const identity = await generateIdentity();
+		const recipient = await identityToRecipient(identity);
+		await makeClaudeStore(first.claudeRoot, { main: { mtimeMs: SOURCE_MTIME_MS }, sidecars: [] });
+		await makeClaudeStore(second.claudeRoot, { main: { mtimeMs: SOURCE_MTIME_MS }, sidecars: [] });
+		const configured = (layout: Layout, machine: string) =>
+			JSON.stringify({
+				version: 1,
+				machine,
+				archiveRoot: layout.archiveRoot,
+				sweep: { intervalMinutes: 60 },
+				offbox: {
+					mode: "configured",
+					recipient,
+					remote: { destination: first.remote, rcloneConfig: "default" },
+				},
+			});
+		await Promise.all([mkdir(first.blotterHome, { recursive: true }), mkdir(second.blotterHome, { recursive: true })]);
+		await writeFile(join(first.blotterHome, "config.json"), `${configured(first, "shared-machine")}\n`);
+		expect((await runCli(["sync"], { home: first.home, env: first.env })).code).toBe(0);
+		const remoteIndexPath = join(first.remote, "shared-machine", "index.jsonl.age");
+		const originalRemoteIndex = await readFile(remoteIndexPath);
+
+		await writeFile(join(second.blotterHome, "config.json"), `${configured(second, "shared-machine")}\n`);
+		const refused = await runCli(["sync"], { home: second.home, env: second.env });
+
+		expect(refused.code).toBe(1);
+		expect(refused.stderr).toContain(
+			"an archive for machine `shared-machine` already exists at the remote; restore it first (`blotter restore --from-remote --identity <kit-file>`) or change `machine` in config.json.",
+		);
+		expect(await readFile(remoteIndexPath)).toEqual(originalRemoteIndex);
+
+		await writeFile(join(second.blotterHome, "config.json"), `${configured(second, "second-machine")}\n`);
+		const separated = await runCli(["sync"], { home: second.home, env: second.env });
+		expect(separated.code).toBe(0);
+		expect(await stat(join(first.remote, "second-machine", "index.jsonl.age"))).toBeDefined();
+	});
+
 	test("touches and uses the blotter-owned config in managed mode", async () => {
 		const layout = await makeLayout();
 		const identity = await generateIdentity();

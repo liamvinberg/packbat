@@ -3,6 +3,7 @@ import { mkdir, realpath } from "node:fs/promises";
 import { homedir } from "node:os";
 import { isAbsolute } from "node:path";
 import { adapters, unsupportedStores } from "../adapters/registry.js";
+import { scheduleEnvironment } from "../schedule/environment.js";
 import {
 	activateSchedule,
 	deactivateSchedule,
@@ -92,7 +93,7 @@ export async function createInitScheduleOptions(home: BlotterHome, homePath: str
 		logsPath: home.logsPath,
 		nodePath: process.execPath,
 		entryPath: await realpath(entryArgument),
-		...(process.env.BLOTTER_HOME === undefined ? {} : { blotterHome: process.env.BLOTTER_HOME }),
+		environment: scheduleEnvironment(process.env),
 		env: process.env,
 	};
 }

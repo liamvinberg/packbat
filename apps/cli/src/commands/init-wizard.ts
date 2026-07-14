@@ -1,7 +1,9 @@
+import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import { isAbsolute, join } from "node:path";
 import { cancel, confirm, intro, isCancel, log, note, outro, password, select, spinner, text } from "@clack/prompts";
 import { type BlotterConfig, loadConfig, type OffboxConfig } from "../core/config.js";
+import { commandOnPath } from "../core/exec.js";
 import { resolveHome } from "../core/home.js";
 import {
 	createInitScheduleOptions,
@@ -12,7 +14,9 @@ import {
 	writeInitConfig,
 } from "../core/setup.js";
 import { generateIdentity, identityToRecipient } from "../offbox/age.js";
+import { discoverRclone } from "../offbox/rclone.js";
 import { renderS3Remote, renderSftpRemote, writeManagedRcloneConfig } from "../offbox/rclone-conf.js";
+import { pickRcloneInstall } from "../offbox/rclone-install.js";
 import {
 	type RecoveryKitRemote,
 	recipientChallenge,
@@ -25,6 +29,13 @@ import { runDoctor } from "./doctor.js";
 import { runSync } from "./sync.js";
 
 const WIZARD_CANCELLED = Symbol("wizard-cancelled");
+
+const RCLONE_INSTALL_COPY = {
+	brewConfirm: "Install rclone with Homebrew? (runs: brew install rclone)",
+	manualNoteTitle: "Install rclone",
+	manualConfirm: "rclone is installed now",
+	skipped: "Off-box is skipped because rclone is not installed.",
+} as const; // DRAFT copy
 
 type WizardCancelled = typeof WIZARD_CANCELLED;
 type ConfiguredOffbox = Extract<OffboxConfig, { mode: "configured" }>;
@@ -76,6 +87,58 @@ function s3Destination(bucket: string, prefix: string): string {
 	const cleanBucket = bucket.replace(/^\/+|\/+$/gu, "");
 	const cleanPrefix = prefix.replace(/^\/+|\/+$/gu, "");
 	return `blotter:${cleanPrefix === "" ? cleanBucket : `${cleanBucket}/${cleanPrefix}`}`;
+}
+
+async function runStreaming(command: readonly string[]): Promise<void> {
+	const executable = command[0];
+	if (executable === undefined) return;
+	await new Promise<void>((resolve) => {
+		const child = spawn(executable, command.slice(1), { env: process.env, stdio: "inherit" });
+		child.on("error", () => resolve());
+		child.on("close", () => resolve());
+	});
+}
+
+async function ensureRclone(): Promise<boolean | WizardCancelled> {
+	try {
+		await discoverRclone();
+		return true;
+	} catch (error) {
+		if (!(error instanceof Error) || !error.message.startsWith("rclone was not found")) {
+			throw error;
+		}
+	}
+
+	const hasBrew = commandOnPath("brew") !== null;
+	const install = pickRcloneInstall(process.platform, (command) => command === "brew" && hasBrew);
+	if (install.kind === "brew") {
+		const accepted = promptResult(await confirm({ message: RCLONE_INSTALL_COPY.brewConfirm, initialValue: true }));
+		if (accepted === WIZARD_CANCELLED) return accepted;
+		if (!accepted) {
+			log.info(RCLONE_INSTALL_COPY.skipped);
+			return false;
+		}
+		await runStreaming(install.command);
+	} else {
+		note(install.command, RCLONE_INSTALL_COPY.manualNoteTitle);
+		const ready = promptResult(await confirm({ message: RCLONE_INSTALL_COPY.manualConfirm, initialValue: true }));
+		if (ready === WIZARD_CANCELLED) return ready;
+		if (!ready) {
+			log.info(RCLONE_INSTALL_COPY.skipped);
+			return false;
+		}
+	}
+
+	try {
+		await discoverRclone();
+		return true;
+	} catch (error) {
+		if (!(error instanceof Error) || !error.message.startsWith("rclone was not found")) {
+			throw error;
+		}
+		log.info(RCLONE_INSTALL_COPY.skipped);
+		return false;
+	}
 }
 
 async function askS3Remote(): Promise<RemoteSetup | WizardCancelled> {
@@ -267,6 +330,11 @@ async function configureOffbox(config: BlotterConfig, homePath: string): Promise
 	);
 	if (choice === WIZARD_CANCELLED) return choice;
 	if (choice === "skip") {
+		return { kind: "skipped", config: await writeInitConfig(home, config.archiveRoot, skippedOffboxConfig()) };
+	}
+	const rclone = await ensureRclone();
+	if (rclone === WIZARD_CANCELLED) return rclone;
+	if (!rclone) {
 		return { kind: "skipped", config: await writeInitConfig(home, config.archiveRoot, skippedOffboxConfig()) };
 	}
 

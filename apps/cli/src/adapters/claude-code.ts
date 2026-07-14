@@ -1,40 +1,12 @@
-import type { Dirent, Stats } from "node:fs";
-import { readdir, stat } from "node:fs/promises";
 import { join, relative } from "node:path";
-import type { FileRole, HarnessAdapter, SessionFile, SessionUnit } from "./adapter.js";
+import { readDirectoryOrEmpty, statOrNull } from "../core/fs.js";
+import { type FileRole, type HarnessAdapter, type SessionFile, type SessionUnit, UUID_SOURCE } from "./adapter.js";
 
-const UUID_SOURCE = "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}";
 const TRANSCRIPT_PATTERN = new RegExp(`^(${UUID_SOURCE})\\.jsonl$`, "i");
 const SIDECAR_DIRECTORY_PATTERN = new RegExp(`^(${UUID_SOURCE})$`, "i");
 
-function isEnoent(error: unknown): error is NodeJS.ErrnoException {
-	return error instanceof Error && "code" in error && error.code === "ENOENT";
-}
-
-async function readDirectory(path: string): Promise<Dirent[]> {
-	try {
-		return await readdir(path, { withFileTypes: true });
-	} catch (error) {
-		if (isEnoent(error)) {
-			return [];
-		}
-		throw error;
-	}
-}
-
-async function statPath(path: string): Promise<Stats | null> {
-	try {
-		return await stat(path);
-	} catch (error) {
-		if (isEnoent(error)) {
-			return null;
-		}
-		throw error;
-	}
-}
-
 async function toSessionFile(storeRoot: string, absPath: string, role: FileRole): Promise<SessionFile | null> {
-	const stats = await statPath(absPath);
+	const stats = await statOrNull(absPath);
 	if (stats === null || !stats.isFile()) {
 		return null;
 	}
@@ -49,7 +21,7 @@ async function toSessionFile(storeRoot: string, absPath: string, role: FileRole)
 
 async function walkSidecars(storeRoot: string, directory: string): Promise<SessionFile[]> {
 	const files: SessionFile[] = [];
-	const entries = (await readDirectory(directory)).sort((left, right) => left.name.localeCompare(right.name));
+	const entries = (await readDirectoryOrEmpty(directory)).sort((left, right) => left.name.localeCompare(right.name));
 	for (const entry of entries) {
 		if (entry.name === ".DS_Store") {
 			continue;
@@ -72,7 +44,9 @@ async function walkSidecars(storeRoot: string, directory: string): Promise<Sessi
 
 async function enumerateProject(storeRoot: string, projectDirectory: string): Promise<SessionUnit[]> {
 	const units = new Map<string, SessionUnit>();
-	const entries = (await readDirectory(projectDirectory)).sort((left, right) => left.name.localeCompare(right.name));
+	const entries = (await readDirectoryOrEmpty(projectDirectory)).sort((left, right) =>
+		left.name.localeCompare(right.name),
+	);
 
 	for (const entry of entries) {
 		if (entry.name === ".DS_Store") {
@@ -118,7 +92,7 @@ export const claudeCodeAdapter: HarnessAdapter = {
 	},
 	async enumerate(storeRoot) {
 		const units: SessionUnit[] = [];
-		const projects = (await readDirectory(storeRoot)).sort((left, right) => left.name.localeCompare(right.name));
+		const projects = (await readDirectoryOrEmpty(storeRoot)).sort((left, right) => left.name.localeCompare(right.name));
 		for (const project of projects) {
 			if (project.name === ".DS_Store" || !project.isDirectory()) {
 				continue;

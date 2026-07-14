@@ -193,6 +193,38 @@ describe("blotter restore", () => {
 		await expectRestored(layout.claudeRoot, snapshot);
 	});
 
+	test("refuses a corrupt archived payload before writing and still restores an intact unit", async () => {
+		const layout = await makeLayout();
+		await writeConfig(layout);
+		const claude = await makeClaudeStore(layout.claudeRoot, {
+			main: { mtimeMs: SOURCE_MTIME_MS },
+			sidecars: [{ relPath: join("tool-results", "synthetic-result.txt"), mtimeMs: SOURCE_MTIME_MS }],
+		});
+		const codex = await makeCodexStore(layout.codexRoot, { mtimeMs: SOURCE_MTIME_MS });
+		const codexSnapshot = await snapshotFiles(codex.files);
+		expect((await runCli(["sync"], { home: layout.home, env: layout.env })).code).toBe(0);
+		const corruptPath = join(layout.archiveRoot, MACHINE, "claude-code", `${claude.files[0]!.relPath}.zst`);
+		const corruptBytes = await readFile(corruptPath);
+		corruptBytes[Math.floor(corruptBytes.byteLength / 2)]! ^= 1;
+		await writeFile(corruptPath, corruptBytes);
+		await Promise.all([
+			rm(layout.claudeRoot, { recursive: true, force: true }),
+			rm(layout.codexRoot, { recursive: true, force: true }),
+		]);
+
+		const refused = await runCli(["restore", "--force", claude.id], { home: layout.home, env: layout.env });
+
+		expect(refused.code).toBe(1);
+		expect(refused.stderr).toContain(`archived file is corrupt: ${corruptPath} (sha256 mismatch)`);
+		for (const file of claude.files) {
+			await expectMissing(file.absPath);
+		}
+
+		const intact = await runCli(["restore", codex.id], { home: layout.home, env: layout.env });
+		expect(intact.code).toBe(0);
+		await expectRestored(layout.codexRoot, codexSnapshot);
+	});
+
 	test("resolves unique prefixes and reports ambiguous, unknown, and unsupported arguments", async () => {
 		const layout = await makeLayout();
 		await writeConfig(layout);

@@ -1,9 +1,11 @@
+import type { ScheduleEnvironment } from "./environment.js";
+
 export const CRON_MARKER = "# blotter-sync";
 
 export interface CronArtifactOptions {
 	nodePath: string;
 	entryPath: string;
-	blotterHome?: string;
+	environment: ScheduleEnvironment;
 }
 
 function shellQuote(value: string): string {
@@ -15,7 +17,7 @@ function isBlotterEntry(line: string): boolean {
 }
 
 export function generateCronEntry(options: CronArtifactOptions): string {
-	const environment = options.blotterHome === undefined ? "" : `BLOTTER_HOME=${shellQuote(options.blotterHome)} `;
+	const environment = [...options.environment].map(([key, value]) => `${key}=${shellQuote(value)} `).join("");
 	return `3 * * * * ${environment}${shellQuote(options.nodePath)} ${shellQuote(options.entryPath)} ${shellQuote("sync")} ${CRON_MARKER}`;
 }
 
