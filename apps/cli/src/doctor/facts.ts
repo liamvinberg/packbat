@@ -15,11 +15,9 @@ import { readDerivedIndex } from "../core/index.js";
 import type { RunStamp } from "../core/stamps.js";
 import { CRON_MARKER, generateCronEntry } from "../schedule/cron.js";
 import { generateLaunchdPlist, LAUNCHD_LABEL } from "../schedule/launchd.js";
-import { generateSystemdService, generateSystemdTimer } from "../schedule/systemd.js";
+import { generateSystemdService, generateSystemdTimer, SYSTEMD_SERVICE, SYSTEMD_TIMER } from "../schedule/systemd.js";
 
 const MINIMUM_FREE_BYTES = 500 * 1024 * 1024;
-const SYSTEMD_SERVICE = "packbat-sync.service";
-const SYSTEMD_TIMER = "packbat-sync.timer";
 
 export interface Fact {
 	id: string;

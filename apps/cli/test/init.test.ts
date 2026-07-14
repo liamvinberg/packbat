@@ -19,19 +19,31 @@ afterEach(async () => {
 });
 
 describe("packbat init", () => {
-	test("uses PACKBAT_HOME and ignores the former home override", async () => {
+	test("uses PACKBAT_HOME", async () => {
 		const home = await makeTempHome();
 		homes.push(home);
 		const packbatHome = join(home, "custom-packbat-home");
-		const ignoredFormerHome = join(home, "ignored-former-home");
-		const formerHomeKey = ["BLOT", "TER_HOME"].join("");
 		const result = await runCli(["init", "--yes", "--offbox", "skip", "--no-activate"], {
 			home,
-			env: { PACKBAT_HOME: packbatHome, [formerHomeKey]: ignoredFormerHome },
+			env: { PACKBAT_HOME: packbatHome },
 		});
 
 		expect(result.code).toBe(0);
 		expect(await stat(join(packbatHome, "config.json"))).toBeDefined();
+	});
+
+	test("ignores the former home override when it is used alone", async () => {
+		const home = await makeTempHome();
+		homes.push(home);
+		const ignoredFormerHome = join(home, "ignored-former-home");
+		const formerHomeKey = ["BLOT", "TER_HOME"].join("");
+		const result = await runCli(["init", "--yes", "--offbox", "skip", "--no-activate"], {
+			home,
+			env: { [formerHomeKey]: ignoredFormerHome },
+		});
+
+		expect(result.code).toBe(0);
+		expect(await stat(join(home, ".packbat", "config.json"))).toBeDefined();
 		await expect(stat(ignoredFormerHome)).rejects.toMatchObject({ code: "ENOENT" });
 	});
 

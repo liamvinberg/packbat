@@ -9,11 +9,9 @@ import { pathExists } from "../core/fs.js";
 import { generateCronEntry, mergeCronTab, stripCronEntry } from "./cron.js";
 import type { ScheduleEnvironment } from "./environment.js";
 import { generateLaunchdPlist, LAUNCHD_LABEL } from "./launchd.js";
-import { generateSystemdService, generateSystemdTimer } from "./systemd.js";
+import { generateSystemdService, generateSystemdTimer, SYSTEMD_SERVICE, SYSTEMD_TIMER } from "./systemd.js";
 
 const execFileAsync = promisify(execFile);
-const SYSTEMD_SERVICE = "packbat-sync.service";
-const SYSTEMD_TIMER = "packbat-sync.timer";
 
 export interface ScheduleInstallOptions {
 	userHome: string;

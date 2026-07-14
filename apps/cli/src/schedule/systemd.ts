@@ -1,5 +1,8 @@
 import type { ScheduleEnvironment } from "./environment.js";
 
+export const SYSTEMD_SERVICE = "packbat-sync.service";
+export const SYSTEMD_TIMER = "packbat-sync.timer";
+
 export interface SystemdServiceOptions {
 	nodePath: string;
 	entryPath: string;
@@ -30,7 +33,7 @@ Description=Run Packbat sync hourly
 [Timer]
 OnCalendar=*-*-* *:03:00
 Persistent=true
-Unit=packbat-sync.service
+Unit=${SYSTEMD_SERVICE}
 
 [Install]
 WantedBy=timers.target

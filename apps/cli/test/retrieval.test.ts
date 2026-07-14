@@ -53,6 +53,22 @@ afterEach(async () => {
 });
 
 describe("packbat retrieval", () => {
+	test("reports command-specific search and show usage errors", async () => {
+		const test = await layout();
+
+		const search = await command(test, ["search", "--wat"]);
+		expect(search.code).toBe(1);
+		expect(search.stdout).toBe("");
+		expect(search.stderr).toContain("packbat search: unknown option --wat");
+		expect(search.stderr).toContain("Usage: packbat search <query>");
+
+		const show = await command(test, ["show", "--wat"]);
+		expect(show.code).toBe(1);
+		expect(show.stdout).toBe("");
+		expect(show.stderr).toContain("packbat show: unknown option --wat");
+		expect(show.stderr).toContain("Usage: packbat show <unit-or-key>");
+	});
+
 	test("searches Claude turns and show keeps null and empty fields stable", async () => {
 		const test = await layout();
 		await writeArchivedJsonl({
@@ -321,7 +337,7 @@ describe("packbat retrieval", () => {
 				message: { role: "user", content: `replacement ${index}` },
 			})),
 		});
-		const cliEntry = fileURLToPath(new URL("../dist/main.js", import.meta.url));
+		const cliEntry = fileURLToPath(new URL("../bin/packbat.js", import.meta.url));
 		const child = spawn(process.execPath, [cliEntry, "search", "--rebuild", "--json"], {
 			cwd: test.home,
 			env: { PATH: process.env.PATH ?? "", HOME: test.home, ...test.env },
