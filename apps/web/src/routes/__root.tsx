@@ -16,6 +16,13 @@ export const Route = createRootRoute({
 			{ name: "description", content: description },
 			{ property: "og:title", content: title },
 			{ property: "og:description", content: description },
+			{ property: "og:type", content: "website" },
+			{ property: "og:url", content: "https://packbat.dev/" },
+			{ property: "og:image", content: "https://packbat.dev/og.png" },
+			{ property: "og:image:width", content: "1200" },
+			{ property: "og:image:height", content: "630" },
+			{ property: "og:image:alt", content: "Claude Code deletes your sessions after 30 days. Packbat keeps them." },
+			{ name: "twitter:card", content: "summary_large_image" },
 		],
 		links: [
 			{ rel: "stylesheet", href: appCss },
