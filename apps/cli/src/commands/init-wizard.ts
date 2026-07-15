@@ -33,9 +33,9 @@ const WIZARD_CANCELLED = Symbol("wizard-cancelled");
 const RCLONE_INSTALL_COPY = {
 	brewConfirm: "Install rclone with Homebrew? (runs: brew install rclone)",
 	manualNoteTitle: "Install rclone",
-	manualConfirm: "rclone is installed now",
+	manualConfirm: "Is rclone installed now?",
 	skipped: "Off-box is skipped because rclone is not installed.",
-} as const; // DRAFT copy
+} as const;
 
 type WizardCancelled = typeof WIZARD_CANCELLED;
 type ConfiguredOffbox = Extract<OffboxConfig, { mode: "configured" }>;
@@ -276,6 +276,9 @@ async function saveRecoveryKit(kit: string, homePath: string): Promise<boolean |
 	if (destination === WIZARD_CANCELLED) return destination;
 	if (destination === "print") {
 		note(kit, "Recovery kit");
+		log.warn(
+			"This terminal is the only copy. Put it somewhere safe off this machine before closing, a password manager works.",
+		);
 		return true;
 	}
 
@@ -294,6 +297,7 @@ async function saveRecoveryKit(kit: string, homePath: string): Promise<boolean |
 	if (path === WIZARD_CANCELLED) return path;
 	await writeRecoveryKit(path.trim(), kit);
 	log.success(`Saved recovery kit: ${path.trim()}`);
+	log.warn("Keep a copy off this machine, a password manager works.");
 	return true;
 }
 
@@ -301,7 +305,7 @@ async function verifyCustody(challenge: string): Promise<boolean | WizardCancell
 	for (let attempt = 0; attempt < 2; attempt += 1) {
 		const answer = promptResult(
 			await text({
-				message: "Enter the last 8 recipient characters from the recovery kit",
+				message: "Enter the last 8 characters of the recipient from the recovery kit",
 				validate: required,
 			}),
 		);
@@ -318,12 +322,13 @@ async function verifyCustody(challenge: string): Promise<boolean | WizardCancell
 
 async function configureOffbox(config: PackbatConfig, homePath: string): Promise<OffboxSetupResult | WizardCancelled> {
 	const home = resolveHome();
+	log.info("Right now your archive lives only on this machine. An encrypted copy on a remote you own survives it.");
 	const choice = promptResult<"skip" | "remote">(
 		await select<"skip" | "remote">({
 			message: "Off-box copies",
 			options: [
 				{ value: "skip" as const, label: "Skip for now" },
-				{ value: "remote" as const, label: "Remote I own" },
+				{ value: "remote" as const, label: "A remote I own" },
 			],
 			initialValue: "skip",
 		}),
@@ -350,13 +355,14 @@ async function configureOffbox(config: PackbatConfig, homePath: string): Promise
 	});
 	const saved = await saveRecoveryKit(kit, homePath);
 	if (saved === WIZARD_CANCELLED) return saved;
+	log.warn("The recovery kit holds the only key. Off-box copies cannot be decrypted without it.");
 	const custody = await verifyCustody(recipientChallenge(recipient));
 	if (custody === WIZARD_CANCELLED) return custody;
 	if (!custody) {
-		log.warn("Custody was not verified. Off-box is skipped.");
+		log.warn("The recovery kit was not verified. Off-box is skipped.");
 		return { kind: "skipped", config: await writeInitConfig(home, config.archiveRoot, skippedOffboxConfig()) };
 	}
-	log.success("Recovery kit verified. Future backups need no key prompt.");
+	log.success("Recovery kit verified. The key is only needed to restore from the remote.");
 	if (remote.managedConfig !== undefined) {
 		await writeManagedRcloneConfig(home.rcloneConfPath, remote.managedConfig);
 	}
@@ -377,12 +383,13 @@ export async function runInitWizard(): Promise<number> {
 		);
 	}
 	if (detection.unsupported.length === 0) {
-		log.info("Found, not yet supported: none");
+		log.info("Found but not yet supported: none");
 	} else {
 		log.info(
-			["Found, not yet supported:", ...detection.unsupported.map((item) => `${item.displayName}: ${item.path}`)].join(
-				"\n",
-			),
+			[
+				"Found but not yet supported:",
+				...detection.unsupported.map((item) => `${item.displayName}: ${item.path}`),
+			].join("\n"),
 		);
 	}
 
@@ -437,8 +444,8 @@ export async function runInitWizard(): Promise<number> {
 			sweepCancelled = true;
 		},
 	});
-	let summary = "First sweep finished.";
-	sweep.start("Running first sweep");
+	let summary = "First sync finished.";
+	sweep.start("Running first sync");
 	let syncCode: number;
 	while (true) {
 		if (sweepCancelled) return 1;
@@ -454,7 +461,7 @@ export async function runInitWizard(): Promise<number> {
 		});
 		if (!busy) break;
 		if (sweepCancelled) return 1;
-		sweep.message("Waiting for running sync");
+		sweep.message("Waiting for the running sync");
 		await new Promise((resolve) => setTimeout(resolve, 250));
 	}
 	if (syncCode === 1) {
@@ -485,7 +492,7 @@ export async function runInitWizard(): Promise<number> {
 			if (!remoteCancelled) remoteCheck.stop("Remote index checked.");
 		} else {
 			if (!remoteCancelled) {
-				remoteCheck.error(`Remote index check failed: ${remoteErrors.join("; ")}`); // DRAFT copy
+				remoteCheck.error(`Remote index check failed: ${remoteErrors.join("; ")}`);
 			}
 			remoteCode = 1;
 		}
@@ -494,6 +501,6 @@ export async function runInitWizard(): Promise<number> {
 
 	const doctorCode = await runDoctor([]);
 	const operationalFailure = syncCode === 1 || remoteCode === 1 || doctorCode === 1;
-	outro(operationalFailure ? "Setup failed. Run `packbat status`." : "Done. Run `packbat status`.");
+	outro(operationalFailure ? "Setup failed. Run `packbat doctor`." : "Done. Run `packbat status`.");
 	return operationalFailure ? 1 : 0;
 }

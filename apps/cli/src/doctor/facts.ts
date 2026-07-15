@@ -632,7 +632,7 @@ async function unsupportedStoreFacts(context: DoctorContext): Promise<Fact[]> {
 	for (const store of unsupportedStores) {
 		const path = store.detect(context.env, context.userHome);
 		if (path !== null) {
-			facts.push(fact(`unsupported-${store.id}`, "info", `found ${store.id} at ${path} — not yet supported`, { path }));
+			facts.push(fact(`unsupported-${store.id}`, "info", `found ${store.id} at ${path}, not yet supported`, { path }));
 		}
 	}
 	return facts;

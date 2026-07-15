@@ -3,9 +3,9 @@ export type RcloneInstall =
 	| { kind: "manual"; command: string };
 
 const MANUAL_INSTALL = {
-	linux: "sudo apt install rclone",
+	linux: "sudo apt install rclone (other distros: https://rclone.org/install/)",
 	other: "https://rclone.org/install/",
-} as const; // DRAFT copy
+} as const;
 
 export function pickRcloneInstall(platform: NodeJS.Platform, hasCommand: (command: string) => boolean): RcloneInstall {
 	if (hasCommand("brew")) {

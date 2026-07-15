@@ -93,7 +93,7 @@ describe("packbat init", () => {
 		expect(result.code).toBe(0);
 		expect(result.stderr).toBe("");
 		expect(result.stdout).toContain("detected: Claude Code, Codex, pi, OpenCode, Gemini CLI");
-		expect(result.stdout).toContain(`found, not yet supported: Cursor CLI (${join(home, ".cursor")})`);
+		expect(result.stdout).toContain(`found but not yet supported: Cursor CLI (${join(home, ".cursor")})`);
 		expect(result.stdout).toContain(`archive: ${archiveRoot}`);
 		expect(result.stdout).toContain("archived 8, unchanged 0, failed 0");
 		expect(result.stdout).toContain("installed: launchd schedule matches");

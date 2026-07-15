@@ -39,13 +39,11 @@ function renderRemote(remote: RecoveryKitRemote): string {
 }
 
 export function renderRecoveryKit(input: RecoveryKitInput): string {
-	// DRAFT copy
 	const remoteSections = input.remotes
 		.map((remote, index) => `${input.remotes.length === 1 ? "Remote" : `Remote ${index + 1}`}\n${renderRemote(remote)}`)
 		.join("\n\n");
 	const firstRemote = input.remotes[0];
-	const additionalSetup = input.remotes.length === 1 ? "" : "\nAdd the other remote destinations to config.json.\n"; // DRAFT copy
-	// DRAFT copy
+	const additionalSetup = input.remotes.length === 1 ? "" : "\nAdd the other remote destinations to config.json.\n";
 	const restoreCommands = input.remotes
 		.map(
 			(remote, index) =>

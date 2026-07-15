@@ -19,7 +19,7 @@ describe("pickRcloneInstall", () => {
 	test("gives Linux users a package-manager command when Homebrew is absent", () => {
 		expect(pickRcloneInstall("linux", () => false)).toEqual({
 			kind: "manual",
-			command: "sudo apt install rclone",
+			command: "sudo apt install rclone (other distros: https://rclone.org/install/)",
 		});
 	});
 });

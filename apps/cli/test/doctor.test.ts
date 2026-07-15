@@ -463,7 +463,7 @@ describe("packbat doctor", () => {
 		const report = JSON.parse(result.stdout) as DoctorJson;
 		expect(report.facts.find(({ id }) => id === "unsupported-cursor")).toMatchObject({
 			status: "info",
-			detail: `found cursor at ${cursorPath} — not yet supported`,
+			detail: `found cursor at ${cursorPath}, not yet supported`,
 		});
 	});
 

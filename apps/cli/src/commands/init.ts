@@ -219,10 +219,10 @@ export async function runInit(argv: string[]): Promise<number> {
 
 	process.stdout.write(`detected: ${detection.detected.map(({ displayName }) => displayName).join(", ") || "none"}\n`);
 	if (detection.unsupported.length === 0) {
-		process.stdout.write("found, not yet supported: none\n");
+		process.stdout.write("found but not yet supported: none\n");
 	} else {
 		for (const { displayName, path } of detection.unsupported) {
-			process.stdout.write(`found, not yet supported: ${displayName} (${path})\n`);
+			process.stdout.write(`found but not yet supported: ${displayName} (${path})\n`);
 		}
 	}
 	process.stdout.write(`archive: ${config.archiveRoot}\n`);

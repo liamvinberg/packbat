@@ -105,7 +105,7 @@ export type HarnessAdapter = SessionHarnessAdapter | DatabaseSnapshotHarnessAdap
 
 /**
  * A store Packbat recognizes but does not yet archive. Doctor reports these as
- * "found, not yet supported" so coverage gaps are visible instead of silent.
+ * "found but not yet supported" so coverage gaps are visible instead of silent.
  */
 export interface UnsupportedStore {
 	id: "cursor";
