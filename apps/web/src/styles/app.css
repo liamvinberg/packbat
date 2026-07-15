@@ -1,0 +1,117 @@
+@import 'tailwindcss';
+@import '@fontsource-variable/archivo';
+@import '@fontsource/space-mono/400.css';
+@import '@fontsource/space-mono/700.css';
+
+@theme {
+	--color-ground: #12141a;
+	--color-surface: #1c2029;
+	--color-hairline: #262a33;
+	--color-ink: #f2efe6;
+	--color-muted: #8c919c;
+	--color-muted-deep: #5e626c;
+	--color-accent: #f2c14e;
+	--color-ok: #7fb482;
+	--color-info: #6e9cc9;
+	--color-problem: #d77e68;
+
+	--font-display: 'Archivo', system-ui, sans-serif;
+	--font-mono: 'Space Mono', ui-monospace, monospace;
+
+	--text-xs: 13px;
+	--text-sm: 14px;
+	--text-base: 15px;
+	--text-md: 16px;
+	--text-lg: 18px;
+	--text-xl: 22px;
+	--text-2xl: 32px;
+	--text-display: 56px;
+
+	--font-weight-normal: 400;
+	--font-weight-medium: 500;
+	--font-weight-semibold: 600;
+	--font-weight-bold: 700;
+	--font-weight-extrabold: 800;
+	--font-weight-black: 900;
+
+	--tracking-display: -0.03em;
+	--tracking-tight: -0.01em;
+	--tracking-normal: 0em;
+
+	--leading-xs: 16px;
+	--leading-ui: 18px;
+	--leading-mono: 22px;
+	--leading-h3: 26px;
+	--leading-body: 27px;
+	--leading-wordmark: 28px;
+	--leading-h2: 36px;
+	--leading-display: 57px;
+
+	--space-1: 4px;
+	--space-2: 8px;
+	--space-3: 12px;
+	--space-4: 16px;
+	--space-5: 20px;
+	--space-6: 24px;
+	--space-8: 32px;
+	--space-10: 40px;
+	--space-12: 48px;
+	--space-16: 64px;
+	--space-20: 80px;
+	--space-24: 96px;
+	--space-30: 120px;
+
+	--radius-xs: 5px;
+	--radius-sm: 6px;
+	--radius-md: 7px;
+}
+
+html {
+	background: var(--color-ground);
+	color: var(--color-ink);
+}
+
+body {
+	font-family: var(--font-display);
+}
+
+@media (prefers-reduced-motion: no-preference) {
+	html {
+		scroll-behavior: smooth;
+	}
+}
+
+:focus-visible {
+	outline: 2px solid var(--color-accent);
+	outline-offset: 2px;
+}
+
+.skip-link {
+	position: fixed;
+	top: var(--space-3);
+	left: var(--space-3);
+	z-index: 10;
+	padding: var(--space-2) var(--space-3);
+	background: var(--color-accent);
+	color: var(--color-ground);
+	transform: translateY(calc(-100% - var(--space-3)));
+}
+
+.skip-link:focus {
+	transform: translateY(0);
+}
+
+.text-display-fluid {
+	font-size: clamp(42px, calc(24px + 2.22vw), 56px);
+	line-height: 1.02;
+}
+
+.text-h2-fluid {
+	font-size: clamp(36px, calc(16px + 2.22vw), 48px);
+	line-height: calc(50 / 48);
+}
+
+.text-h2-lg-fluid {
+	font-size: clamp(48px, calc(16px + 3.89vw), 72px);
+	line-height: 1;
+}

@@ -6,7 +6,21 @@
 		"useIgnoreFile": true
 	},
 	"files": {
-		"includes": ["**", "!apps/cloud/drizzle/meta", "!apps/cloud/worker-configuration.d.ts"]
+		"includes": [
+			"**",
+			"!apps/cloud/drizzle/meta",
+			"!apps/cloud/worker-configuration.d.ts",
+			"!apps/web/public/packbat-mark.svg",
+			"!apps/web/src/routeTree.gen.ts"
+		]
+	},
+	"css": {
+		"formatter": {
+			"quoteStyle": "single"
+		},
+		"parser": {
+			"tailwindDirectives": true
+		}
 	},
 	"formatter": {
 		"indentStyle": "tab",

@@ -1,0 +1,27 @@
+{
+	"name": "@packbat/web",
+	"private": true,
+	"type": "module",
+	"scripts": {
+		"dev": "vite dev",
+		"build": "vite build",
+		"typecheck": "tsc",
+		"preview": "vite preview"
+	},
+	"dependencies": {
+		"@fontsource-variable/archivo": "^5.2.8",
+		"@fontsource/space-mono": "^5.2.9",
+		"@tanstack/react-router": "^1.170.18",
+		"@tanstack/react-start": "^1.168.28",
+		"react": "^19.2.7",
+		"react-dom": "^19.2.7"
+	},
+	"devDependencies": {
+		"@tailwindcss/vite": "^4.3.2",
+		"@types/react": "^19.2.17",
+		"@types/react-dom": "^19.2.3",
+		"tailwindcss": "^4.3.2",
+		"typescript": "^7.0.2",
+		"vite": "^8.1.4"
+	}
+}
