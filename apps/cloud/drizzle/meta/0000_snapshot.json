@@ -1,0 +1,589 @@
+{
+  "version": "6",
+  "dialect": "sqlite",
+  "id": "bc3ef6d2-35f0-4040-bd7d-e3c4da4f8395",
+  "prevId": "00000000-0000-0000-0000-000000000000",
+  "tables": {
+    "billing_customers": {
+      "name": "billing_customers",
+      "columns": {
+        "user_id": {
+          "name": "user_id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "provider": {
+          "name": "provider",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "provider_customer_id": {
+          "name": "provider_customer_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        }
+      },
+      "indexes": {
+        "billing_customers_provider_customer_id_unique": {
+          "name": "billing_customers_provider_customer_id_unique",
+          "columns": [
+            "provider",
+            "provider_customer_id"
+          ],
+          "isUnique": true
+        }
+      },
+      "foreignKeys": {
+        "billing_customers_user_id_users_id_fk": {
+          "name": "billing_customers_user_id_users_id_fk",
+          "tableFrom": "billing_customers",
+          "tableTo": "users",
+          "columnsFrom": [
+            "user_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {
+        "billing_customers_provider_valid": {
+          "name": "billing_customers_provider_valid",
+          "value": "\"billing_customers\".\"provider\" = 'stripe'"
+        }
+      }
+    },
+    "cli_credentials": {
+      "name": "cli_credentials",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "user_id": {
+          "name": "user_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "refresh_token_digest": {
+          "name": "refresh_token_digest",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "expires_at": {
+          "name": "expires_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "revoked_at": {
+          "name": "revoked_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        }
+      },
+      "indexes": {
+        "cli_credentials_user_id_index": {
+          "name": "cli_credentials_user_id_index",
+          "columns": [
+            "user_id"
+          ],
+          "isUnique": false
+        }
+      },
+      "foreignKeys": {
+        "cli_credentials_user_id_users_id_fk": {
+          "name": "cli_credentials_user_id_users_id_fk",
+          "tableFrom": "cli_credentials",
+          "tableTo": "users",
+          "columnsFrom": [
+            "user_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {
+        "cli_credentials_expiry_after_creation": {
+          "name": "cli_credentials_expiry_after_creation",
+          "value": "\"cli_credentials\".\"expires_at\" > \"cli_credentials\".\"created_at\""
+        },
+        "cli_credentials_revoked_after_creation": {
+          "name": "cli_credentials_revoked_after_creation",
+          "value": "\"cli_credentials\".\"revoked_at\" IS NULL OR \"cli_credentials\".\"revoked_at\" >= \"cli_credentials\".\"created_at\""
+        }
+      }
+    },
+    "machine_remotes": {
+      "name": "machine_remotes",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "user_id": {
+          "name": "user_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "current_index_etag": {
+          "name": "current_index_etag",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        }
+      },
+      "indexes": {
+        "machine_remotes_user_id_index": {
+          "name": "machine_remotes_user_id_index",
+          "columns": [
+            "user_id"
+          ],
+          "isUnique": false
+        },
+        "machine_remotes_user_id_id_unique": {
+          "name": "machine_remotes_user_id_id_unique",
+          "columns": [
+            "user_id",
+            "id"
+          ],
+          "isUnique": true
+        }
+      },
+      "foreignKeys": {
+        "machine_remotes_user_id_users_id_fk": {
+          "name": "machine_remotes_user_id_users_id_fk",
+          "tableFrom": "machine_remotes",
+          "tableTo": "users",
+          "columnsFrom": [
+            "user_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {}
+    },
+    "object_ledger": {
+      "name": "object_ledger",
+      "columns": {
+        "user_id": {
+          "name": "user_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "machine_remote_id": {
+          "name": "machine_remote_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "logical_object_key": {
+          "name": "logical_object_key",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "bytes": {
+          "name": "bytes",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "etag": {
+          "name": "etag",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "last_completed_at": {
+          "name": "last_completed_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        }
+      },
+      "indexes": {
+        "object_ledger_user_id_index": {
+          "name": "object_ledger_user_id_index",
+          "columns": [
+            "user_id"
+          ],
+          "isUnique": false
+        }
+      },
+      "foreignKeys": {
+        "object_ledger_user_id_users_id_fk": {
+          "name": "object_ledger_user_id_users_id_fk",
+          "tableFrom": "object_ledger",
+          "tableTo": "users",
+          "columnsFrom": [
+            "user_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "object_ledger_user_id_machine_remote_id_machine_remotes_user_id_id_fk": {
+          "name": "object_ledger_user_id_machine_remote_id_machine_remotes_user_id_id_fk",
+          "tableFrom": "object_ledger",
+          "tableTo": "machine_remotes",
+          "columnsFrom": [
+            "user_id",
+            "machine_remote_id"
+          ],
+          "columnsTo": [
+            "user_id",
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {
+        "object_ledger_machine_remote_id_logical_object_key_pk": {
+          "columns": [
+            "machine_remote_id",
+            "logical_object_key"
+          ],
+          "name": "object_ledger_machine_remote_id_logical_object_key_pk"
+        }
+      },
+      "uniqueConstraints": {},
+      "checkConstraints": {
+        "object_ledger_bytes_nonnegative": {
+          "name": "object_ledger_bytes_nonnegative",
+          "value": "\"object_ledger\".\"bytes\" >= 0"
+        }
+      }
+    },
+    "upload_reservations": {
+      "name": "upload_reservations",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "user_id": {
+          "name": "user_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "machine_remote_id": {
+          "name": "machine_remote_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "logical_object_key": {
+          "name": "logical_object_key",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "expected_bytes": {
+          "name": "expected_bytes",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "checksum": {
+          "name": "checksum",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "replaced_bytes": {
+          "name": "replaced_bytes",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "idempotency_key": {
+          "name": "idempotency_key",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "expires_at": {
+          "name": "expires_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "state": {
+          "name": "state",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        }
+      },
+      "indexes": {
+        "upload_reservations_user_id_idempotency_key_unique": {
+          "name": "upload_reservations_user_id_idempotency_key_unique",
+          "columns": [
+            "user_id",
+            "idempotency_key"
+          ],
+          "isUnique": true
+        },
+        "upload_reservations_expiry_index": {
+          "name": "upload_reservations_expiry_index",
+          "columns": [
+            "state",
+            "expires_at"
+          ],
+          "isUnique": false
+        }
+      },
+      "foreignKeys": {
+        "upload_reservations_user_id_users_id_fk": {
+          "name": "upload_reservations_user_id_users_id_fk",
+          "tableFrom": "upload_reservations",
+          "tableTo": "users",
+          "columnsFrom": [
+            "user_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "upload_reservations_user_id_machine_remote_id_machine_remotes_user_id_id_fk": {
+          "name": "upload_reservations_user_id_machine_remote_id_machine_remotes_user_id_id_fk",
+          "tableFrom": "upload_reservations",
+          "tableTo": "machine_remotes",
+          "columnsFrom": [
+            "user_id",
+            "machine_remote_id"
+          ],
+          "columnsTo": [
+            "user_id",
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {
+        "upload_reservations_expected_bytes_nonnegative": {
+          "name": "upload_reservations_expected_bytes_nonnegative",
+          "value": "\"upload_reservations\".\"expected_bytes\" >= 0"
+        },
+        "upload_reservations_replaced_bytes_nonnegative": {
+          "name": "upload_reservations_replaced_bytes_nonnegative",
+          "value": "\"upload_reservations\".\"replaced_bytes\" >= 0"
+        },
+        "upload_reservations_expiry_after_creation": {
+          "name": "upload_reservations_expiry_after_creation",
+          "value": "\"upload_reservations\".\"expires_at\" > \"upload_reservations\".\"created_at\""
+        },
+        "upload_reservations_state_valid": {
+          "name": "upload_reservations_state_valid",
+          "value": "\"upload_reservations\".\"state\" IN ('pending', 'completed', 'expired')"
+        }
+      }
+    },
+    "users": {
+      "name": "users",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "github_subject_id": {
+          "name": "github_subject_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "plan": {
+          "name": "plan",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "quota_bytes": {
+          "name": "quota_bytes",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "used_bytes": {
+          "name": "used_bytes",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "reserved_bytes": {
+          "name": "reserved_bytes",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "storage_prefix": {
+          "name": "storage_prefix",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        }
+      },
+      "indexes": {
+        "users_github_subject_id_unique": {
+          "name": "users_github_subject_id_unique",
+          "columns": [
+            "github_subject_id"
+          ],
+          "isUnique": true
+        },
+        "users_storage_prefix_unique": {
+          "name": "users_storage_prefix_unique",
+          "columns": [
+            "storage_prefix"
+          ],
+          "isUnique": true
+        }
+      },
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {
+        "users_github_subject_id_numeric": {
+          "name": "users_github_subject_id_numeric",
+          "value": "\"users\".\"github_subject_id\" <> '' AND \"users\".\"github_subject_id\" NOT GLOB '*[^0-9]*'"
+        },
+        "users_plan_valid": {
+          "name": "users_plan_valid",
+          "value": "\"users\".\"plan\" IN ('free', 'paid')"
+        },
+        "users_quota_bytes_nonnegative": {
+          "name": "users_quota_bytes_nonnegative",
+          "value": "\"users\".\"quota_bytes\" >= 0"
+        },
+        "users_used_bytes_nonnegative": {
+          "name": "users_used_bytes_nonnegative",
+          "value": "\"users\".\"used_bytes\" >= 0"
+        },
+        "users_reserved_bytes_nonnegative": {
+          "name": "users_reserved_bytes_nonnegative",
+          "value": "\"users\".\"reserved_bytes\" >= 0"
+        }
+      }
+    }
+  },
+  "views": {},
+  "enums": {},
+  "_meta": {
+    "schemas": {},
+    "tables": {},
+    "columns": {}
+  },
+  "internal": {
+    "indexes": {}
+  }
+}

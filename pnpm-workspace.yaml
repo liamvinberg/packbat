@@ -4,6 +4,13 @@ packages:
 
 allowBuilds:
   esbuild: true
+  sharp: true
+  workerd: true
+
+minimumReleaseAgeExclude:
+  - '@cloudflare/vitest-pool-workers@0.18.5'
+  - miniflare@4.20260710.0
+  - wrangler@4.111.0
 
 overrides:
   packbat: link:apps/cli

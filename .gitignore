@@ -3,6 +3,8 @@ dist/
 *.log
 .env
 .env.*
+.dev.vars
+.dev.vars.*
 .DS_Store
 CLAUDE.local.md
 .claude/settings.local.json

@@ -5,6 +5,9 @@
 		"clientKind": "git",
 		"useIgnoreFile": true
 	},
+	"files": {
+		"includes": ["**", "!apps/cloud/drizzle/meta", "!apps/cloud/worker-configuration.d.ts"]
+	},
 	"formatter": {
 		"indentStyle": "tab",
 		"lineWidth": 120
