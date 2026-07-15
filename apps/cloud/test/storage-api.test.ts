@@ -1,5 +1,7 @@
+import { createScheduledController } from "cloudflare:test";
 import { env, exports } from "cloudflare:workers";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import worker from "../src/index.js";
 
 interface LinkedAccount {
 	accessToken: string;
@@ -71,10 +73,12 @@ async function reserve(
 	accessToken: string,
 	input: {
 		bytes: Uint8Array;
+		expectedArchiveCount?: number;
 		expectedIndexEtag?: string | null;
 		idempotencyKey: string;
 		logicalObjectKey: string;
 		machineRemoteId: string;
+		sweepId?: string;
 	},
 ): Promise<Response> {
 	const expectedChecksum = await checksum(input.bytes);
@@ -86,6 +90,7 @@ async function reserve(
 				...rest,
 				checksumSha256: expectedChecksum.value,
 				expectedBytes: bytes.byteLength,
+				sweepId: input.sweepId ?? input.idempotencyKey,
 			},
 			accessToken,
 		),
@@ -147,12 +152,13 @@ describe("ciphertext uploads", () => {
 		expect(reservation.upload.headers).toEqual({
 			"Content-Length": String(bytes.byteLength),
 			"Content-Type": "application/octet-stream",
+			"If-None-Match": "*",
 			"x-amz-checksum-sha256": (await checksum(bytes)).value,
 		});
 		const uploadUrl = new URL(reservation.upload.url);
 		expect(uploadUrl.host).toBe("0123456789abcdef0123456789abcdef.r2.cloudflarestorage.com");
 		expect(uploadUrl.searchParams.get("X-Amz-SignedHeaders")?.split(";")).toEqual(
-			expect.arrayContaining(["content-length", "content-type", "host", "x-amz-checksum-sha256"]),
+			expect.arrayContaining(["content-length", "content-type", "host", "if-none-match", "x-amz-checksum-sha256"]),
 		);
 		expect(reservation.upload.url).not.toContain(linked.account.id);
 
@@ -234,7 +240,7 @@ describe("ciphertext uploads", () => {
 			machineRemoteId,
 		});
 		const initial = (await initialResponse.json()) as ReservationResponse;
-		await putObject(linked.account.id, machineRemoteId, logicalObjectKey, initialBytes);
+		const initialObject = await putObject(linked.account.id, machineRemoteId, logicalObjectKey, initialBytes);
 		expect((await finalize(linked.accessToken, initial.reservationId)).status).toBe(200);
 
 		const replacementBytes = new Uint8Array(6);
@@ -245,6 +251,7 @@ describe("ciphertext uploads", () => {
 			machineRemoteId,
 		});
 		const replacement = (await replacementResponse.json()) as ReservationResponse;
+		expect(replacement.upload.headers["If-Match"]).toBe(`"${initialObject.etag}"`);
 		expect(
 			await env.DB.prepare("SELECT used_bytes, reserved_bytes FROM users WHERE id = ?").bind(linked.account.id).first(),
 		).toEqual({ reserved_bytes: 6, used_bytes: 0 });
@@ -348,6 +355,70 @@ describe("ciphertext uploads", () => {
 			await env.DB.prepare("SELECT used_bytes, reserved_bytes FROM users WHERE id = ?").bind(linked.account.id).first(),
 		).toEqual({ reserved_bytes: 3, used_bytes: 0 });
 	});
+
+	it("refuses finalization when ciphertext carries extra metadata", async () => {
+		mockGitHubUsers({ "github-token": { id: 42_424, login: "octocat" } });
+		const linked = await exchange();
+		const machineRemoteId = await createMachine(linked.accessToken);
+		const logicalObjectKey = "claude/metadata.age";
+		const bytes = new Uint8Array([1, 2, 3]);
+		const response = await reserve(linked.accessToken, {
+			bytes,
+			idempotencyKey: "metadata",
+			logicalObjectKey,
+			machineRemoteId,
+		});
+		const reservation = (await response.json()) as ReservationResponse;
+		const expectedChecksum = await checksum(bytes);
+		const key = `users/${await storagePrefix(linked.account.id)}/machines/${machineRemoteId}/${logicalObjectKey}`;
+		await env.ARCHIVE_BUCKET.put(key, bytes, {
+			customMetadata: { hostname: "private-machine" },
+			httpMetadata: { cacheControl: "private", contentType: "application/octet-stream" },
+			sha256: expectedChecksum.digest,
+		});
+
+		const finalized = await finalize(linked.accessToken, reservation.reservationId);
+		expect(finalized.status).toBe(409);
+		expect(await finalized.json()).toEqual({ error: "upload_mismatch" });
+		expect(await env.ARCHIVE_BUCKET.head(key)).toBeNull();
+	});
+
+	it("removes abandoned uploads with forbidden metadata after reservation expiry", async () => {
+		mockGitHubUsers({ "github-token": { id: 42_424, login: "octocat" } });
+		const linked = await exchange();
+		const machineRemoteId = await createMachine(linked.accessToken);
+		const logicalObjectKey = "claude/abandoned.age";
+		const bytes = new Uint8Array([1, 2, 3]);
+		const response = await reserve(linked.accessToken, {
+			bytes,
+			idempotencyKey: "abandoned-metadata",
+			logicalObjectKey,
+			machineRemoteId,
+		});
+		const reservation = (await response.json()) as ReservationResponse;
+		await env.DB.prepare("UPDATE upload_reservations SET created_at = 0, expires_at = 1 WHERE id = ?")
+			.bind(reservation.reservationId)
+			.run();
+		const expectedChecksum = await checksum(bytes);
+		const key = `users/${await storagePrefix(linked.account.id)}/machines/${machineRemoteId}/${logicalObjectKey}`;
+		await env.ARCHIVE_BUCKET.put(key, bytes, {
+			customMetadata: { hostname: "private-machine" },
+			httpMetadata: { contentType: "application/octet-stream" },
+			sha256: expectedChecksum.digest,
+		});
+
+		await worker.scheduled(createScheduledController({ scheduledTime: Date.now() }), env);
+
+		expect(await env.ARCHIVE_BUCKET.head(key)).toBeNull();
+		const expired = await reserve(linked.accessToken, {
+			bytes,
+			idempotencyKey: "abandoned-metadata",
+			logicalObjectKey,
+			machineRemoteId,
+		});
+		expect(expired.status).toBe(200);
+		expect(await expired.json()).toMatchObject({ reservationId: reservation.reservationId, state: "expired" });
+	});
 });
 
 describe("index publication", () => {
@@ -355,21 +426,37 @@ describe("index publication", () => {
 		mockGitHubUsers({ "github-token": { id: 42_424, login: "octocat" } });
 		const linked = await exchange();
 		const machineRemoteId = await createMachine(linked.accessToken);
+		const firstSweepId = "first-index-sweep";
+		const prematureIndex = await reserve(linked.accessToken, {
+			bytes: new Uint8Array([2]),
+			expectedArchiveCount: 1,
+			expectedIndexEtag: null,
+			idempotencyKey: "premature-index",
+			logicalObjectKey: "index.jsonl.age",
+			machineRemoteId,
+			sweepId: firstSweepId,
+		});
+		expect(prematureIndex.status).toBe(409);
+		expect(await prematureIndex.json()).toEqual({ error: "sweep_incomplete" });
+
 		const archiveBytes = new Uint8Array([1]);
 		const archiveResponse = await reserve(linked.accessToken, {
 			bytes: archiveBytes,
 			idempotencyKey: "archive",
 			logicalObjectKey: "claude/archive.age",
 			machineRemoteId,
+			sweepId: firstSweepId,
 		});
 		const archive = (await archiveResponse.json()) as ReservationResponse;
 
 		const blockedIndex = await reserve(linked.accessToken, {
 			bytes: new Uint8Array([2]),
+			expectedArchiveCount: 1,
 			expectedIndexEtag: null,
 			idempotencyKey: "blocked-index",
 			logicalObjectKey: "index.jsonl.age",
 			machineRemoteId,
+			sweepId: firstSweepId,
 		});
 		expect(blockedIndex.status).toBe(409);
 		expect(await blockedIndex.json()).toEqual({ error: "archives_pending" });
@@ -380,34 +467,58 @@ describe("index publication", () => {
 		const firstIndexBytes = new Uint8Array([2]);
 		const firstIndexResponse = await reserve(linked.accessToken, {
 			bytes: firstIndexBytes,
+			expectedArchiveCount: 1,
 			expectedIndexEtag: null,
 			idempotencyKey: "first-index",
 			logicalObjectKey: "index.jsonl.age",
 			machineRemoteId,
+			sweepId: firstSweepId,
 		});
 		expect(firstIndexResponse.status).toBe(201);
 		const firstIndex = (await firstIndexResponse.json()) as ReservationResponse;
 		expect(firstIndex.upload.headers["If-None-Match"]).toBe("*");
 		expect(new URL(firstIndex.upload.url).searchParams.get("X-Amz-SignedHeaders")).toContain("if-none-match");
+		const lateArchive = await reserve(linked.accessToken, {
+			bytes: new Uint8Array([4]),
+			idempotencyKey: "late-archive",
+			logicalObjectKey: "claude/late.age",
+			machineRemoteId,
+			sweepId: "later-sweep",
+		});
+		expect(lateArchive.status).toBe(409);
+		expect(await lateArchive.json()).toEqual({ error: "index_pending" });
 		const firstIndexObject = await putObject(linked.account.id, machineRemoteId, "index.jsonl.age", firstIndexBytes);
 		expect((await finalize(linked.accessToken, firstIndex.reservationId)).status).toBe(200);
+		const closedSweepArchive = await reserve(linked.accessToken, {
+			bytes: new Uint8Array([4]),
+			idempotencyKey: "closed-sweep-archive",
+			logicalObjectKey: "claude/closed.age",
+			machineRemoteId,
+			sweepId: firstSweepId,
+		});
+		expect(closedSweepArchive.status).toBe(409);
+		expect(await closedSweepArchive.json()).toEqual({ error: "sweep_closed" });
 
 		const stale = await reserve(linked.accessToken, {
 			bytes: new Uint8Array([3]),
+			expectedArchiveCount: 0,
 			expectedIndexEtag: "stale-etag",
 			idempotencyKey: "stale-index",
 			logicalObjectKey: "index.jsonl.age",
 			machineRemoteId,
+			sweepId: "stale-index-sweep",
 		});
 		expect(stale.status).toBe(409);
 		expect(await stale.json()).toEqual({ error: "index_conflict" });
 
 		const secondIndexResponse = await reserve(linked.accessToken, {
 			bytes: new Uint8Array([3]),
+			expectedArchiveCount: 0,
 			expectedIndexEtag: firstIndexObject.etag,
 			idempotencyKey: "second-index",
 			logicalObjectKey: "index.jsonl.age",
 			machineRemoteId,
+			sweepId: "second-index-sweep",
 		});
 		expect(secondIndexResponse.status).toBe(201);
 		const secondIndex = (await secondIndexResponse.json()) as ReservationResponse;
@@ -420,9 +531,19 @@ describe("index publication", () => {
 			new Uint8Array([3]),
 		);
 		expect((await finalize(linked.accessToken, secondIndex.reservationId)).status).toBe(200);
-		expect(
-			await env.DB.prepare("SELECT current_index_etag FROM machine_remotes WHERE id = ?").bind(machineRemoteId).first(),
-		).toEqual({ current_index_etag: secondIndexObject.etag });
+		const nextIndexResponse = await reserve(linked.accessToken, {
+			bytes: new Uint8Array([4]),
+			expectedArchiveCount: 0,
+			expectedIndexEtag: secondIndexObject.etag,
+			idempotencyKey: "next-index",
+			logicalObjectKey: "index.jsonl.age",
+			machineRemoteId,
+			sweepId: "next-index-sweep",
+		});
+		expect(nextIndexResponse.status).toBe(201);
+		expect(((await nextIndexResponse.json()) as ReservationResponse).upload.headers["If-Match"]).toBe(
+			`"${secondIndexObject.etag}"`,
+		);
 	});
 });
 

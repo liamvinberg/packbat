@@ -42,7 +42,9 @@ stores more than the signed length, and removes every synthetic proof object.
 - `POST /v1/auth/refresh` rotates a refresh token. Each refresh token works once.
 - `DELETE /v1/auth/credential` revokes the authenticated CLI credential.
 - `POST /v1/machines` registers an opaque remote machine namespace.
-- `POST /v1/uploads/reservations` atomically reserves quota and returns exact-object upload authority.
+- `POST /v1/uploads/reservations` atomically reserves quota and returns exact-object upload authority. Every request
+  carries a sweep ID; an index also declares the sweep's archive count and prior index ETag.
 - `POST /v1/uploads/:reservationId/finalize` verifies R2 length and SHA-256 before publishing the ledger entry.
 - `POST /v1/downloads` returns short-lived read authority for a committed ciphertext object.
-- `DELETE /v1/account` removes the account's complete R2 prefix before deleting its D1 rows.
+- `DELETE /v1/account` fences every outstanding upload URL, then removes the complete R2 prefix before its D1 rows.
+  It returns `202 deletion_pending` with `retryAt` while those fenced URLs finish expiring; retry until `204`.

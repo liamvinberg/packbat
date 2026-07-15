@@ -45,6 +45,7 @@ const reservationSchema = z
 	.strictObject({
 		checksumSha256: z.string().regex(/^[A-Za-z0-9+/]{43}=$/u),
 		expectedBytes: z.number().int().positive().safe().max(CLOUD_QUOTA_BYTES),
+		expectedArchiveCount: z.number().int().nonnegative().safe().optional(),
 		expectedIndexEtag: z
 			.string()
 			.regex(/^[A-Za-z0-9-]{1,128}$/u)
@@ -53,6 +54,7 @@ const reservationSchema = z
 		idempotencyKey: z.string().min(1).max(128),
 		logicalObjectKey: logicalObjectKeySchema,
 		machineRemoteId: machineRemoteIdSchema,
+		sweepId: z.string().min(1).max(128),
 	})
 	.superRefine((value, context) => {
 		if (value.logicalObjectKey === INDEX_OBJECT_KEY && value.expectedIndexEtag === undefined) {
@@ -60,6 +62,12 @@ const reservationSchema = z
 		}
 		if (value.logicalObjectKey !== INDEX_OBJECT_KEY && value.expectedIndexEtag !== undefined) {
 			context.addIssue({ code: "custom", message: "expectedIndexEtag is only valid for the index" });
+		}
+		if (value.logicalObjectKey === INDEX_OBJECT_KEY && value.expectedArchiveCount === undefined) {
+			context.addIssue({ code: "custom", message: "expectedArchiveCount is required for the index" });
+		}
+		if (value.logicalObjectKey !== INDEX_OBJECT_KEY && value.expectedArchiveCount !== undefined) {
+			context.addIssue({ code: "custom", message: "expectedArchiveCount is only valid for the index" });
 		}
 	});
 const downloadSchema = z.strictObject({
@@ -197,11 +205,15 @@ export function createApp() {
 
 	app.post("/v1/uploads/reservations", authMiddleware(), async (context) => {
 		const input = await readJson(context.req.raw, reservationSchema);
-		const { expectedIndexEtag, ...requiredInput } = input;
+		const { expectedArchiveCount, expectedIndexEtag, ...requiredInput } = input;
 		const result = await reserveUpload(
 			context.env,
 			context.get("principal").userId,
-			expectedIndexEtag === undefined ? requiredInput : { ...requiredInput, expectedIndexEtag },
+			{
+				...requiredInput,
+				...(expectedArchiveCount === undefined ? {} : { expectedArchiveCount }),
+				...(expectedIndexEtag === undefined ? {} : { expectedIndexEtag }),
+			},
 			now(),
 		);
 		const body =
@@ -237,8 +249,10 @@ export function createApp() {
 	});
 
 	app.delete("/v1/account", authMiddleware(), async (context) => {
-		await deleteAccountData(context.env, context.get("principal").userId);
-		return context.body(null, 204);
+		const result = await deleteAccountData(context.env, context.get("principal").userId, now());
+		return result.complete
+			? context.body(null, 204)
+			: context.json({ retryAt: timestamp(result.retryAt), state: "deletion_pending" }, 202);
 	});
 
 	app.notFound((context) => context.json({ error: "not_found" }, 404));

@@ -171,12 +171,13 @@ describe("account deletion", () => {
 				"INSERT INTO object_ledger (user_id, machine_remote_id, logical_object_key, bytes, etag, last_completed_at) VALUES (?, ?, ?, ?, ?, ?)",
 			).bind(userId, remoteId, "archive.age", 100, "etag", currentTime),
 			env.DB.prepare(
-				"INSERT INTO upload_reservations (id, user_id, machine_remote_id, logical_object_key, expected_bytes, checksum_sha256, replaced_bytes, idempotency_key, created_at, expires_at, state) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+				"INSERT INTO upload_reservations (id, user_id, machine_remote_id, logical_object_key, sweep_id, expected_bytes, checksum_sha256, replaced_bytes, idempotency_key, created_at, expires_at, state) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
 			).bind(
 				crypto.randomUUID(),
 				userId,
 				remoteId,
 				"next.age",
+				"deletion-sweep",
 				100,
 				"checksum",
 				0,
@@ -199,7 +200,26 @@ describe("account deletion", () => {
 			headers: { Authorization: `Bearer ${linked.accessToken}` },
 			method: "DELETE",
 		});
-		expect(response.status).toBe(204);
+		expect(response.status).toBe(202);
+		expect(await response.json()).toMatchObject({ state: "deletion_pending" });
+		expect(await env.ARCHIVE_BUCKET.head(`${prefix}machines/${remoteId}/next.age`)).toMatchObject({ size: 0 });
+		expect(
+			await env.DB.prepare("SELECT deletion_requested_at FROM users WHERE id = ?").bind(userId).first(),
+		).not.toBeNull();
+		const blockedMachine = await exports.default.fetch("https://api.packbat.dev/v1/machines", {
+			body: "{}",
+			headers: { Authorization: `Bearer ${linked.accessToken}`, "Content-Type": "application/json" },
+			method: "POST",
+		});
+		expect(blockedMachine.status).toBe(409);
+		expect(await blockedMachine.json()).toEqual({ error: "account_deleting" });
+
+		await env.DB.prepare("UPDATE users SET delete_after = 0 WHERE id = ?").bind(userId).run();
+		const completed = await exports.default.fetch("https://api.packbat.dev/v1/account", {
+			headers: { Authorization: `Bearer ${linked.accessToken}` },
+			method: "DELETE",
+		});
+		expect(completed.status).toBe(204);
 
 		for (const table of [
 			"billing_customers",

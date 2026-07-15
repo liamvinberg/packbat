@@ -13,6 +13,8 @@ export const users = sqliteTable(
 		usedBytes: integer("used_bytes").notNull(),
 		reservedBytes: integer("reserved_bytes").notNull(),
 		storagePrefix: text("storage_prefix").notNull(),
+		deletionRequestedAt: integer("deletion_requested_at"),
+		deleteAfter: integer("delete_after"),
 	},
 	(table) => [
 		uniqueIndex("users_github_subject_id_unique").on(table.githubSubjectId),
@@ -97,6 +99,8 @@ export const uploadReservations = sqliteTable(
 			.references(() => users.id, { onDelete: "cascade" }),
 		machineRemoteId: text("machine_remote_id").notNull(),
 		logicalObjectKey: text("logical_object_key").notNull(),
+		sweepId: text("sweep_id").notNull(),
+		expectedArchiveCount: integer("expected_archive_count"),
 		expectedBytes: integer("expected_bytes").notNull(),
 		checksumSha256: text("checksum_sha256").notNull(),
 		replacedBytes: integer("replaced_bytes").notNull(),
@@ -105,10 +109,17 @@ export const uploadReservations = sqliteTable(
 		idempotencyKey: text("idempotency_key").notNull(),
 		createdAt: integer("created_at").notNull(),
 		expiresAt: integer("expires_at").notNull(),
+		writeFencedAt: integer("write_fenced_at"),
 		state: text("state", { enum: ["pending", "completed", "expired"] }).notNull(),
 	},
 	(table) => [
 		uniqueIndex("upload_reservations_user_id_idempotency_key_unique").on(table.userId, table.idempotencyKey),
+		uniqueIndex("upload_reservations_sweep_object_unique").on(
+			table.userId,
+			table.machineRemoteId,
+			table.sweepId,
+			table.logicalObjectKey,
+		),
 		uniqueIndex("upload_reservations_pending_object_unique")
 			.on(table.userId, table.machineRemoteId, table.logicalObjectKey)
 			.where(sql`${table.state} = 'pending'`),
@@ -118,6 +129,10 @@ export const uploadReservations = sqliteTable(
 			foreignColumns: [machineRemotes.userId, machineRemotes.id],
 		}).onDelete("cascade"),
 		check("upload_reservations_expected_bytes_nonnegative", sql`${table.expectedBytes} >= 0`),
+		check(
+			"upload_reservations_expected_archive_count_nonnegative",
+			sql`${table.expectedArchiveCount} IS NULL OR ${table.expectedArchiveCount} >= 0`,
+		),
 		check("upload_reservations_replaced_bytes_nonnegative", sql`${table.replacedBytes} >= 0`),
 		check("upload_reservations_expiry_after_creation", sql`${table.expiresAt} > ${table.createdAt}`),
 		check("upload_reservations_state_valid", sql`${table.state} IN ('pending', 'completed', 'expired')`),

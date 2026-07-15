@@ -1,6 +1,6 @@
 import { base64Url } from "../base64-url.js";
 import { INDEX_OBJECT_KEY, objectKey, userObjectPrefix } from "./object-key.js";
-import { signDownload, signUpload } from "./r2-signing.js";
+import { OBJECT_CONTENT_TYPE, signDownload, signUpload } from "./r2-signing.js";
 
 type StorageErrorStatus = 404 | 409 | 413;
 
@@ -25,14 +25,18 @@ export interface StorageBindings {
 export interface ReserveUploadInput {
 	checksumSha256: string;
 	expectedBytes: number;
+	expectedArchiveCount?: number;
 	expectedIndexEtag?: string | null;
 	idempotencyKey: string;
 	logicalObjectKey: string;
 	machineRemoteId: string;
+	sweepId: string;
 }
 
 interface ReservationContext {
 	checksumSha256: string;
+	deletionRequestedAt: number | null;
+	expectedArchiveCount: number | null;
 	expectedBytes: number;
 	expectedIndexEtag: string | null;
 	expiresAt: number;
@@ -44,6 +48,7 @@ interface ReservationContext {
 	replacedEtag: string | null;
 	state: "completed" | "expired" | "pending";
 	storagePrefix: string;
+	sweepId: string;
 	userId: string;
 }
 
@@ -58,17 +63,23 @@ export type UploadReservationResult =
 	| { created: false; reservationId: string; state: "expired" };
 
 interface ReservationDiagnosis {
+	archivesInSweep: number;
+	completedArchivesInSweep: number;
 	currentIndexEtag: string | null;
+	deletionRequestedAt: number | null;
 	pendingArchives: number;
+	pendingIndex: number;
 	pendingObject: number;
 	quotaBytes: number;
 	replacedBytes: number;
 	reservedBytes: number;
+	sweepClosed: number;
 	usedBytes: number;
 }
 
 const RESERVATION_LIFETIME_SECONDS = 5 * 60;
 const RECONCILIATION_BATCH_SIZE = 100;
+const DELETION_FENCE_BATCH_SIZE = 100;
 
 function randomOpaqueId(): string {
 	return base64Url(crypto.getRandomValues(new Uint8Array(18)));
@@ -96,7 +107,14 @@ function matchesReservation(object: R2Object, reservation: ReservationContext): 
 	return (
 		object.size === reservation.expectedBytes &&
 		object.checksums.sha256 !== undefined &&
-		bytesToBase64(object.checksums.sha256) === reservation.checksumSha256
+		bytesToBase64(object.checksums.sha256) === reservation.checksumSha256 &&
+		object.httpMetadata?.contentType === OBJECT_CONTENT_TYPE &&
+		object.httpMetadata.contentLanguage === undefined &&
+		object.httpMetadata.contentDisposition === undefined &&
+		object.httpMetadata.contentEncoding === undefined &&
+		object.httpMetadata.cacheControl === undefined &&
+		object.httpMetadata.cacheExpiry === undefined &&
+		Object.keys(object.customMetadata ?? {}).length === 0
 	);
 }
 
@@ -114,6 +132,8 @@ async function getReservation(
 		.prepare(
 			`SELECT
 				r.checksum_sha256 AS checksumSha256,
+				u.deletion_requested_at AS deletionRequestedAt,
+				r.expected_archive_count AS expectedArchiveCount,
 				r.expected_bytes AS expectedBytes,
 				r.expected_index_etag AS expectedIndexEtag,
 				r.expires_at AS expiresAt,
@@ -125,6 +145,7 @@ async function getReservation(
 				r.replaced_etag AS replacedEtag,
 				r.state,
 				u.storage_prefix AS storagePrefix,
+				r.sweep_id AS sweepId,
 				r.user_id AS userId
 			FROM upload_reservations r
 			JOIN users u ON u.id = r.user_id
@@ -151,10 +172,11 @@ async function pendingResult(
 	now: number,
 	created: boolean,
 ): Promise<UploadReservationResult> {
-	const expectedEtag = reservation.logicalObjectKey === INDEX_OBJECT_KEY ? reservation.expectedIndexEtag : undefined;
 	const conditions = {
 		checksumSha256: reservation.checksumSha256,
 		contentLength: reservation.expectedBytes,
+		expectedEtag:
+			reservation.logicalObjectKey === INDEX_OBJECT_KEY ? reservation.expectedIndexEtag : reservation.replacedEtag,
 	};
 	return {
 		created,
@@ -163,7 +185,7 @@ async function pendingResult(
 		upload: await signUpload(
 			signingConfig(env),
 			objectKey(reservation.storagePrefix, reservation.machineRemoteId, reservation.logicalObjectKey),
-			expectedEtag === undefined ? conditions : { ...conditions, expectedEtag },
+			conditions,
 			now,
 			reservation.expiresAt,
 		),
@@ -193,10 +215,12 @@ async function reservationResult(
 function sameRequest(reservation: ReservationContext, input: ReserveUploadInput): boolean {
 	return (
 		reservation.checksumSha256 === input.checksumSha256 &&
+		reservation.expectedArchiveCount === (input.expectedArchiveCount ?? null) &&
 		reservation.expectedBytes === input.expectedBytes &&
 		reservation.expectedIndexEtag === (input.expectedIndexEtag ?? null) &&
 		reservation.logicalObjectKey === input.logicalObjectKey &&
-		reservation.machineRemoteId === input.machineRemoteId
+		reservation.machineRemoteId === input.machineRemoteId &&
+		reservation.sweepId === input.sweepId
 	);
 }
 
@@ -335,7 +359,10 @@ async function reconcileReservation(env: StorageBindings, reservation: Reservati
 async function reconcileExpiredReservations(env: StorageBindings, userId: string, now: number): Promise<void> {
 	while (true) {
 		const expired = await env.DB.prepare(
-			"SELECT id FROM upload_reservations WHERE user_id = ? AND state = 'pending' AND expires_at <= ? LIMIT ?",
+			`SELECT r.id FROM upload_reservations r
+			JOIN users u ON u.id = r.user_id
+			WHERE r.user_id = ? AND u.deletion_requested_at IS NULL
+				AND r.state = 'pending' AND r.expires_at <= ? LIMIT ?`,
 		)
 			.bind(userId, now, RECONCILIATION_BATCH_SIZE)
 			.all<{ id: string }>();
@@ -351,15 +378,47 @@ async function reconcileExpiredReservations(env: StorageBindings, userId: string
 	}
 }
 
+export async function reconcileExpiredUploads(env: StorageBindings, now: number): Promise<void> {
+	while (true) {
+		const expired = await env.DB.prepare(
+			`SELECT r.id, r.user_id AS userId
+			FROM upload_reservations r
+			JOIN users u ON u.id = r.user_id
+			WHERE u.deletion_requested_at IS NULL AND r.state = 'pending' AND r.expires_at <= ?
+			LIMIT ?`,
+		)
+			.bind(now, RECONCILIATION_BATCH_SIZE)
+			.all<{ id: string; userId: string }>();
+		if (expired.results.length === 0) {
+			return;
+		}
+		for (const { id, userId } of expired.results) {
+			const reservation = await getReservation(env.DB, userId, "id", id);
+			if (reservation !== null && reservation.state === "pending" && reservation.deletionRequestedAt === null) {
+				await reconcileReservation(env, reservation, now);
+			}
+		}
+	}
+}
+
 export async function createMachineRemote(binding: D1Database, userId: string, now: number): Promise<string> {
 	const id = randomOpaqueId();
 	const result = await binding
 		.prepare(
-			"INSERT INTO machine_remotes (id, user_id, created_at) SELECT ?, id, ? FROM users WHERE id = ? RETURNING id",
+			`INSERT INTO machine_remotes (id, user_id, created_at)
+			SELECT ?, id, ? FROM users WHERE id = ? AND deletion_requested_at IS NULL
+			RETURNING id`,
 		)
 		.bind(id, now, userId)
 		.first<{ id: string }>();
 	if (result === null) {
+		const deleting = await binding
+			.prepare("SELECT deletion_requested_at FROM users WHERE id = ?")
+			.bind(userId)
+			.first<{ deletion_requested_at: number | null }>();
+		if (deleting?.deletion_requested_at !== null && deleting?.deletion_requested_at !== undefined) {
+			throw new StorageError(409, "account_deleting");
+		}
 		throw new StorageError(404, "account_not_found");
 	}
 	return result.id;
@@ -374,7 +433,18 @@ async function diagnoseReservation(
 	const diagnosis = await binding
 		.prepare(
 			`SELECT
+				(
+					SELECT COUNT(*) FROM upload_reservations r
+					WHERE r.user_id = u.id AND r.machine_remote_id = m.id AND r.sweep_id = ?
+						AND r.logical_object_key <> ?
+				) AS archivesInSweep,
+				(
+					SELECT COUNT(*) FROM upload_reservations r
+					WHERE r.user_id = u.id AND r.machine_remote_id = m.id AND r.sweep_id = ?
+						AND r.logical_object_key <> ? AND r.state = 'completed'
+				) AS completedArchivesInSweep,
 				m.current_index_etag AS currentIndexEtag,
+				u.deletion_requested_at AS deletionRequestedAt,
 				(
 					SELECT COUNT(*) FROM upload_reservations r
 					WHERE r.user_id = u.id AND r.machine_remote_id = m.id AND r.state = 'pending'
@@ -383,11 +453,21 @@ async function diagnoseReservation(
 				(
 					SELECT COUNT(*) FROM upload_reservations r
 					WHERE r.user_id = u.id AND r.machine_remote_id = m.id AND r.state = 'pending'
+						AND r.expires_at > ? AND r.logical_object_key = ?
+				) AS pendingIndex,
+				(
+					SELECT COUNT(*) FROM upload_reservations r
+					WHERE r.user_id = u.id AND r.machine_remote_id = m.id AND r.state = 'pending'
 						AND r.logical_object_key = ?
 				) AS pendingObject,
 				u.quota_bytes AS quotaBytes,
 				COALESCE(o.bytes, 0) AS replacedBytes,
 				u.reserved_bytes AS reservedBytes,
+				(
+					SELECT COUNT(*) FROM upload_reservations r
+					WHERE r.user_id = u.id AND r.machine_remote_id = m.id AND r.sweep_id = ?
+						AND r.logical_object_key = ?
+				) AS sweepClosed,
 				u.used_bytes AS usedBytes
 			FROM users u
 			JOIN machine_remotes m ON m.user_id = u.id AND m.id = ?
@@ -395,13 +475,37 @@ async function diagnoseReservation(
 				AND o.logical_object_key = ?
 			WHERE u.id = ?`,
 		)
-		.bind(now, INDEX_OBJECT_KEY, input.logicalObjectKey, input.machineRemoteId, input.logicalObjectKey, userId)
+		.bind(
+			input.sweepId,
+			INDEX_OBJECT_KEY,
+			input.sweepId,
+			INDEX_OBJECT_KEY,
+			now,
+			INDEX_OBJECT_KEY,
+			now,
+			INDEX_OBJECT_KEY,
+			input.logicalObjectKey,
+			input.sweepId,
+			INDEX_OBJECT_KEY,
+			input.machineRemoteId,
+			input.logicalObjectKey,
+			userId,
+		)
 		.first<ReservationDiagnosis>();
 	if (diagnosis === null) {
 		throw new StorageError(404, "machine_not_found");
 	}
+	if (diagnosis.deletionRequestedAt !== null) {
+		throw new StorageError(409, "account_deleting");
+	}
 	if (diagnosis.pendingObject > 0) {
 		throw new StorageError(409, "upload_in_progress");
+	}
+	if (input.logicalObjectKey !== INDEX_OBJECT_KEY && diagnosis.pendingIndex > 0) {
+		throw new StorageError(409, "index_pending");
+	}
+	if (input.logicalObjectKey !== INDEX_OBJECT_KEY && diagnosis.sweepClosed > 0) {
+		throw new StorageError(409, "sweep_closed");
 	}
 	if (input.logicalObjectKey === INDEX_OBJECT_KEY) {
 		if (diagnosis.currentIndexEtag !== (input.expectedIndexEtag ?? null)) {
@@ -409,6 +513,12 @@ async function diagnoseReservation(
 		}
 		if (diagnosis.pendingArchives > 0) {
 			throw new StorageError(409, "archives_pending");
+		}
+		if (
+			diagnosis.archivesInSweep !== input.expectedArchiveCount ||
+			diagnosis.completedArchivesInSweep !== input.expectedArchiveCount
+		) {
+			throw new StorageError(409, "sweep_incomplete");
 		}
 	}
 	if (
@@ -430,6 +540,9 @@ export async function reserveUpload(
 
 	const existing = await getReservation(env.DB, userId, "idempotency_key", input.idempotencyKey);
 	if (existing !== null) {
+		if (existing.deletionRequestedAt !== null) {
+			throw new StorageError(409, "account_deleting");
+		}
 		if (!sameRequest(existing, input)) {
 			throw new StorageError(409, "idempotency_conflict");
 		}
@@ -443,16 +556,28 @@ export async function reserveUpload(
 		const results = await env.DB.batch([
 			env.DB.prepare(
 				`INSERT INTO upload_reservations (
-					id, user_id, machine_remote_id, logical_object_key, expected_bytes, checksum_sha256,
+					id, user_id, machine_remote_id, logical_object_key, sweep_id, expected_archive_count,
+					expected_bytes, checksum_sha256,
 					replaced_bytes, replaced_etag, expected_index_etag, idempotency_key, created_at, expires_at, state
 				)
-				SELECT ?, u.id, m.id, ?, ?, ?, COALESCE(o.bytes, 0), o.etag, ?, ?, ?, ?, 'pending'
+				SELECT ?, u.id, m.id, ?, ?, ?, ?, ?, COALESCE(o.bytes, 0), o.etag, ?, ?, ?, ?, 'pending'
 				FROM users u
 				JOIN machine_remotes m ON m.user_id = u.id AND m.id = ?
 				LEFT JOIN object_ledger o ON o.user_id = u.id AND o.machine_remote_id = m.id
 					AND o.logical_object_key = ?
-				WHERE u.id = ?
+				WHERE u.id = ? AND u.deletion_requested_at IS NULL
 					AND u.used_bytes + u.reserved_bytes - COALESCE(o.bytes, 0) + ? <= u.quota_bytes
+					AND (? = 1 OR NOT EXISTS (
+						SELECT 1 FROM upload_reservations closed
+						WHERE closed.user_id = u.id AND closed.machine_remote_id = m.id
+							AND closed.sweep_id = ? AND closed.logical_object_key = ?
+					))
+					AND (? = 1 OR NOT EXISTS (
+						SELECT 1 FROM upload_reservations publishing
+						WHERE publishing.user_id = u.id AND publishing.machine_remote_id = m.id
+							AND publishing.state = 'pending' AND publishing.expires_at > ?
+							AND publishing.logical_object_key = ?
+					))
 					AND (? = 0 OR (
 						m.current_index_etag IS ?
 						AND NOT EXISTS (
@@ -461,10 +586,23 @@ export async function reserveUpload(
 								AND pending.state = 'pending' AND pending.expires_at > ?
 								AND pending.logical_object_key <> ?
 						)
+						AND ? = (
+							SELECT COUNT(*) FROM upload_reservations swept
+							WHERE swept.user_id = u.id AND swept.machine_remote_id = m.id
+								AND swept.sweep_id = ? AND swept.logical_object_key <> ?
+								AND swept.state = 'completed'
+						)
+						AND ? = (
+							SELECT COUNT(*) FROM upload_reservations swept
+							WHERE swept.user_id = u.id AND swept.machine_remote_id = m.id
+								AND swept.sweep_id = ? AND swept.logical_object_key <> ?
+						)
 					))`,
 			).bind(
 				id,
 				input.logicalObjectKey,
+				input.sweepId,
+				input.expectedArchiveCount ?? null,
 				input.expectedBytes,
 				input.checksumSha256,
 				input.expectedIndexEtag ?? null,
@@ -476,8 +614,20 @@ export async function reserveUpload(
 				userId,
 				input.expectedBytes,
 				isIndex,
+				input.sweepId,
+				INDEX_OBJECT_KEY,
+				isIndex,
+				now,
+				INDEX_OBJECT_KEY,
+				isIndex,
 				input.expectedIndexEtag ?? null,
 				now,
+				INDEX_OBJECT_KEY,
+				input.expectedArchiveCount ?? -1,
+				input.sweepId,
+				INDEX_OBJECT_KEY,
+				input.expectedArchiveCount ?? -1,
+				input.sweepId,
 				INDEX_OBJECT_KEY,
 			),
 			env.DB.prepare(
@@ -499,6 +649,9 @@ export async function reserveUpload(
 	} catch (error) {
 		const raced = await getReservation(env.DB, userId, "idempotency_key", input.idempotencyKey);
 		if (raced !== null) {
+			if (raced.deletionRequestedAt !== null) {
+				throw new StorageError(409, "account_deleting");
+			}
 			if (!sameRequest(raced, input)) {
 				throw new StorageError(409, "idempotency_conflict");
 			}
@@ -526,6 +679,9 @@ export async function finalizeUpload(
 	const reservation = await getReservation(env.DB, userId, "id", reservationId);
 	if (reservation === null) {
 		throw new StorageError(404, "reservation_not_found");
+	}
+	if (reservation.deletionRequestedAt !== null) {
+		throw new StorageError(409, "account_deleting");
 	}
 	if (reservation.state === "completed") {
 		return { etag: await completedEtag(env.DB, reservation) };
@@ -572,7 +728,8 @@ export async function createDownload(
 		`SELECT u.storage_prefix AS storagePrefix
 		FROM object_ledger o
 		JOIN users u ON u.id = o.user_id
-		WHERE o.user_id = ? AND o.machine_remote_id = ? AND o.logical_object_key = ?`,
+		WHERE o.user_id = ? AND u.deletion_requested_at IS NULL
+			AND o.machine_remote_id = ? AND o.logical_object_key = ?`,
 	)
 		.bind(userId, machineRemoteId, logicalObjectKey)
 		.first<{ storagePrefix: string }>();
@@ -586,20 +743,70 @@ export async function createDownload(
 	);
 }
 
-export async function deleteAccountData(env: StorageBindings, userId: string): Promise<void> {
-	const account = await env.DB.prepare("SELECT storage_prefix AS storagePrefix FROM users WHERE id = ?")
-		.bind(userId)
-		.first<{ storagePrefix: string }>();
+export async function deleteAccountData(
+	env: StorageBindings,
+	userId: string,
+	now: number,
+): Promise<{ complete: true } | { complete: false; retryAt: number }> {
+	const account = await env.DB.prepare(
+		`UPDATE users SET
+			deletion_requested_at = COALESCE(deletion_requested_at, ?),
+			delete_after = COALESCE(
+				delete_after,
+				MAX(?, COALESCE((SELECT MAX(expires_at) + 1 FROM upload_reservations WHERE user_id = users.id), ?))
+			)
+		WHERE id = ? RETURNING storage_prefix AS storagePrefix, delete_after AS deleteAfter`,
+	)
+		.bind(now, now, now, userId)
+		.first<{ deleteAfter: number; storagePrefix: string }>();
 	if (account === null) {
-		return;
+		return { complete: true };
 	}
-	const prefix = userObjectPrefix(account.storagePrefix);
-	while (true) {
-		const listed = await env.ARCHIVE_BUCKET.list({ limit: 1_000, prefix });
-		if (listed.objects.length === 0) {
-			break;
+
+	const unfenced = await env.DB.prepare(
+		`SELECT DISTINCT r.machine_remote_id AS machineRemoteId, r.logical_object_key AS logicalObjectKey
+		FROM upload_reservations r
+		JOIN users u ON u.id = r.user_id
+		WHERE r.user_id = ? AND r.write_fenced_at IS NULL
+			AND r.expires_at >= u.deletion_requested_at
+		LIMIT ?`,
+	)
+		.bind(userId, DELETION_FENCE_BATCH_SIZE)
+		.all<{ logicalObjectKey: string; machineRemoteId: string }>();
+	if (unfenced.results.length > 0) {
+		for (const target of unfenced.results) {
+			await env.ARCHIVE_BUCKET.put(
+				objectKey(account.storagePrefix, target.machineRemoteId, target.logicalObjectKey),
+				new Uint8Array(0),
+				{ httpMetadata: { contentType: OBJECT_CONTENT_TYPE } },
+			);
 		}
+		await env.DB.batch(
+			unfenced.results.map((target) =>
+				env.DB.prepare(
+					`UPDATE upload_reservations SET write_fenced_at = ?
+					WHERE user_id = ? AND machine_remote_id = ? AND logical_object_key = ?
+						AND write_fenced_at IS NULL
+						AND expires_at >= (SELECT deletion_requested_at FROM users WHERE id = ?)`,
+				).bind(now, userId, target.machineRemoteId, target.logicalObjectKey, userId),
+			),
+		);
+		if (unfenced.results.length === DELETION_FENCE_BATCH_SIZE) {
+			return { complete: false, retryAt: now };
+		}
+	}
+	if (now < account.deleteAfter) {
+		return { complete: false, retryAt: account.deleteAfter };
+	}
+
+	const prefix = userObjectPrefix(account.storagePrefix);
+	const listed = await env.ARCHIVE_BUCKET.list({ limit: 1_000, prefix });
+	if (listed.objects.length > 0) {
 		await env.ARCHIVE_BUCKET.delete(listed.objects.map(({ key }) => key));
 	}
+	if (listed.truncated) {
+		return { complete: false, retryAt: now };
+	}
 	await env.DB.prepare("DELETE FROM users WHERE id = ?").bind(userId).run();
+	return { complete: true };
 }

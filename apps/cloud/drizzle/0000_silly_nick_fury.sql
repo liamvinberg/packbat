@@ -50,6 +50,8 @@ CREATE TABLE `upload_reservations` (
 	`user_id` text NOT NULL,
 	`machine_remote_id` text NOT NULL,
 	`logical_object_key` text NOT NULL,
+	`sweep_id` text NOT NULL,
+	`expected_archive_count` integer,
 	`expected_bytes` integer NOT NULL,
 	`checksum_sha256` text NOT NULL,
 	`replaced_bytes` integer NOT NULL,
@@ -58,16 +60,19 @@ CREATE TABLE `upload_reservations` (
 	`idempotency_key` text NOT NULL,
 	`created_at` integer NOT NULL,
 	`expires_at` integer NOT NULL,
+	`write_fenced_at` integer,
 	`state` text NOT NULL,
 	FOREIGN KEY (`user_id`) REFERENCES `users`(`id`) ON UPDATE no action ON DELETE cascade,
 	FOREIGN KEY (`user_id`,`machine_remote_id`) REFERENCES `machine_remotes`(`user_id`,`id`) ON UPDATE no action ON DELETE cascade,
 	CONSTRAINT "upload_reservations_expected_bytes_nonnegative" CHECK("upload_reservations"."expected_bytes" >= 0),
+	CONSTRAINT "upload_reservations_expected_archive_count_nonnegative" CHECK("upload_reservations"."expected_archive_count" IS NULL OR "upload_reservations"."expected_archive_count" >= 0),
 	CONSTRAINT "upload_reservations_replaced_bytes_nonnegative" CHECK("upload_reservations"."replaced_bytes" >= 0),
 	CONSTRAINT "upload_reservations_expiry_after_creation" CHECK("upload_reservations"."expires_at" > "upload_reservations"."created_at"),
 	CONSTRAINT "upload_reservations_state_valid" CHECK("upload_reservations"."state" IN ('pending', 'completed', 'expired'))
 );
 --> statement-breakpoint
 CREATE UNIQUE INDEX `upload_reservations_user_id_idempotency_key_unique` ON `upload_reservations` (`user_id`,`idempotency_key`);--> statement-breakpoint
+CREATE UNIQUE INDEX `upload_reservations_sweep_object_unique` ON `upload_reservations` (`user_id`,`machine_remote_id`,`sweep_id`,`logical_object_key`);--> statement-breakpoint
 CREATE UNIQUE INDEX `upload_reservations_pending_object_unique` ON `upload_reservations` (`user_id`,`machine_remote_id`,`logical_object_key`) WHERE "upload_reservations"."state" = 'pending';--> statement-breakpoint
 CREATE INDEX `upload_reservations_expiry_index` ON `upload_reservations` (`state`,`expires_at`);--> statement-breakpoint
 CREATE TABLE `users` (
@@ -78,6 +83,8 @@ CREATE TABLE `users` (
 	`used_bytes` integer NOT NULL,
 	`reserved_bytes` integer NOT NULL,
 	`storage_prefix` text NOT NULL,
+	`deletion_requested_at` integer,
+	`delete_after` integer,
 	CONSTRAINT "users_github_subject_id_numeric" CHECK("users"."github_subject_id" <> '' AND "users"."github_subject_id" NOT GLOB '*[^0-9]*'),
 	CONSTRAINT "users_quota_bytes_nonnegative" CHECK("users"."quota_bytes" >= 0),
 	CONSTRAINT "users_used_bytes_nonnegative" CHECK("users"."used_bytes" >= 0),

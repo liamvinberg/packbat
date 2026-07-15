@@ -354,6 +354,20 @@
           "notNull": true,
           "autoincrement": false
         },
+        "sweep_id": {
+          "name": "sweep_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "expected_archive_count": {
+          "name": "expected_archive_count",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
         "expected_bytes": {
           "name": "expected_bytes",
           "type": "integer",
@@ -410,6 +424,13 @@
           "notNull": true,
           "autoincrement": false
         },
+        "write_fenced_at": {
+          "name": "write_fenced_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
         "state": {
           "name": "state",
           "type": "text",
@@ -424,6 +445,16 @@
           "columns": [
             "user_id",
             "idempotency_key"
+          ],
+          "isUnique": true
+        },
+        "upload_reservations_sweep_object_unique": {
+          "name": "upload_reservations_sweep_object_unique",
+          "columns": [
+            "user_id",
+            "machine_remote_id",
+            "sweep_id",
+            "logical_object_key"
           ],
           "isUnique": true
         },
@@ -482,6 +513,10 @@
         "upload_reservations_expected_bytes_nonnegative": {
           "name": "upload_reservations_expected_bytes_nonnegative",
           "value": "\"upload_reservations\".\"expected_bytes\" >= 0"
+        },
+        "upload_reservations_expected_archive_count_nonnegative": {
+          "name": "upload_reservations_expected_archive_count_nonnegative",
+          "value": "\"upload_reservations\".\"expected_archive_count\" IS NULL OR \"upload_reservations\".\"expected_archive_count\" >= 0"
         },
         "upload_reservations_replaced_bytes_nonnegative": {
           "name": "upload_reservations_replaced_bytes_nonnegative",
@@ -547,6 +582,20 @@
           "type": "text",
           "primaryKey": false,
           "notNull": true,
+          "autoincrement": false
+        },
+        "deletion_requested_at": {
+          "name": "deletion_requested_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "delete_after": {
+          "name": "delete_after",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
           "autoincrement": false
         }
       },
