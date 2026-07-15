@@ -1,5 +1,6 @@
 import { sign, verify } from "hono/jwt";
 import { z } from "zod";
+import { base64Url } from "../base64-url.js";
 
 const ACCESS_TOKEN_AUDIENCE = "packbat-cli";
 const ACCESS_TOKEN_ISSUER = "https://api.packbat.dev";
@@ -35,14 +36,6 @@ function assertSigningSecret(secret: string): void {
 	if (new TextEncoder().encode(secret).byteLength < 32) {
 		throw new Error("ACCESS_TOKEN_SECRET must contain at least 32 bytes");
 	}
-}
-
-function base64Url(bytes: Uint8Array): string {
-	let binary = "";
-	for (const byte of bytes) {
-		binary += String.fromCharCode(byte);
-	}
-	return btoa(binary).replaceAll("+", "-").replaceAll("/", "_").replace(/=+$/u, "");
 }
 
 async function sha256(value: string): Promise<string> {

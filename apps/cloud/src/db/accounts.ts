@@ -1,6 +1,12 @@
 import { and, eq, gt, isNull } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/d1";
-import { createRefreshToken, REFRESH_TOKEN_LIFETIME_SECONDS, type RefreshToken } from "../auth/tokens.js";
+import {
+	type AccessPrincipal,
+	createRefreshToken,
+	REFRESH_TOKEN_LIFETIME_SECONDS,
+	type RefreshToken,
+} from "../auth/tokens.js";
+import { base64Url } from "../base64-url.js";
 import { cliCredentials, FREE_QUOTA_BYTES, users } from "./schema.js";
 
 export interface Account {
@@ -18,12 +24,7 @@ export interface IssuedCredential {
 }
 
 function randomStoragePrefix(): string {
-	const bytes = crypto.getRandomValues(new Uint8Array(18));
-	let binary = "";
-	for (const byte of bytes) {
-		binary += String.fromCharCode(byte);
-	}
-	return btoa(binary).replaceAll("+", "-").replaceAll("/", "_").replace(/=+$/u, "");
+	return base64Url(crypto.getRandomValues(new Uint8Array(18)));
 }
 
 function toAccount(user: typeof users.$inferSelect): Account {
@@ -105,7 +106,7 @@ export async function rotateCredential(
 
 export async function credentialIsActive(
 	binding: D1Database,
-	principal: { credentialId: string; userId: string },
+	principal: AccessPrincipal,
 	now: number,
 ): Promise<boolean> {
 	const database = drizzle(binding);
@@ -124,11 +125,7 @@ export async function credentialIsActive(
 	return credential !== undefined;
 }
 
-export async function revokeCredential(
-	binding: D1Database,
-	principal: { credentialId: string; userId: string },
-	now: number,
-): Promise<void> {
+export async function revokeCredential(binding: D1Database, principal: AccessPrincipal, now: number): Promise<void> {
 	const database = drizzle(binding);
 	await database
 		.update(cliCredentials)

@@ -23,13 +23,15 @@ pnpm workspace: `apps/cli` (the tool). Node ≥ 22.15, TypeScript maximal strict
 
 ## Conventions
 
-- kebab-case filenames; no barrel exports; no default exports; thin entry points and
-  thin `commands/*` over `core/*`.
+- kebab-case filenames; no barrel exports; no default exports except tool/runtime entry points that require one;
+  thin entry points and thin `commands/*` over `core/*`.
 - Commits: atomic, lowercase, terse, no body (`feat: …`, `fix: …`, `polish: …`).
-- Vitest, colocated `*.test.ts` for pure logic only; everything else tests at the CLI
-  process boundary (`apps/cli/test/helpers/run-cli.ts`) against temp roots. Real zstd,
-  real age, real filesystem — no mocks. Tests assert only externally observable behavior:
-  exit codes, output, files on disk. No test reaches into module internals.
+- Vitest. CLI pure logic gets colocated `*.test.ts`; everything else tests at the CLI process boundary
+  (`apps/cli/test/helpers/run-cli.ts`) against temp roots. Real zstd, real age, real filesystem, no mocks. CLI tests
+  assert only exit codes, output, and files on disk; no test reaches into module internals.
+- Cloud service tests run at the Worker HTTP boundary against real Workerd, D1 migrations, and Web Crypto. A
+  provider fake is allowed only at the outbound third-party HTTP boundary. Direct D1 assertions are reserved for
+  durable-state minimization, tenant isolation, quota/accounting atomicity, and deletion invariants.
 - Fixture stores are synthetic (`docs/research/harness-session-stores.md` fidelity);
   no real session content in fixtures, ever.
 - Hard-cut policy: one canonical current-state path, no compatibility bridges or fallback
