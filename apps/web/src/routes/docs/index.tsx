@@ -2,6 +2,7 @@ import { createFileRoute, Link } from "@tanstack/react-router";
 import { ArticleIntro } from "../../components/article-intro";
 import { ArticleSection } from "../../components/article-section";
 import { CodeBlock } from "../../components/code-block";
+import { INSTALL_COMMAND } from "../../site";
 
 export const Route = createFileRoute("/docs/")({
 	component: GetStartedPage,
@@ -20,7 +21,7 @@ function GetStartedPage() {
 				id="install"
 				title="Install"
 			>
-				<CodeBlock copy lines={[{ text: "$ npm install --global packbat" }]} />
+				<CodeBlock copy lines={[{ text: `$ ${INSTALL_COMMAND}` }]} />
 			</ArticleSection>
 			<ArticleSection
 				description={

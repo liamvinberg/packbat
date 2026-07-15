@@ -1,6 +1,5 @@
 import { CopyButton } from "../components/copy-button";
-
-const installCommand = "npm install --global packbat";
+import { INSTALL_COMMAND } from "../site";
 
 export function Hero() {
 	return (
@@ -37,9 +36,9 @@ export function Hero() {
 						<code className="font-mono text-xs leading-[20px] text-ink min-[900px]:text-md min-[900px]:leading-mono">
 							<span className="hidden font-bold text-accent min-[900px]:inline">$ </span>
 							<span className="min-[900px]:hidden">$ </span>
-							{installCommand}
+							{INSTALL_COMMAND}
 						</code>
-						<CopyButton text={installCommand} variant="landing-desktop" />
+						<CopyButton text={INSTALL_COMMAND} variant="landing-desktop" />
 					</div>
 					<p className="w-[330px] font-mono text-[12px] leading-ui text-muted min-[900px]:w-auto min-[900px]:text-xs min-[900px]:leading-xs">
 						<span className="hidden min-[900px]:inline">works with </span>claude code · codex · opencode · gemini cli ·

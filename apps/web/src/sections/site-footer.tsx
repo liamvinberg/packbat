@@ -1,6 +1,5 @@
 import { BatMark } from "../components/bat-mark";
-
-const githubUrl = "https://github.com/liamvinberg/packbat";
+import { GITHUB_URL, INSTALL_COMMAND } from "../site";
 
 export function SiteFooter() {
 	return (
@@ -21,22 +20,22 @@ export function SiteFooter() {
 						<a className="font-mono text-[12px] leading-ui text-accent" href="/docs">
 							Docs
 						</a>
-						<a className="font-mono text-[12px] leading-ui text-muted" href={githubUrl}>
+						<a className="font-mono text-[12px] leading-ui text-muted" href={GITHUB_URL}>
 							GitHub
 						</a>
 					</div>
 				</div>
 				<div className="hidden items-center gap-[32px] min-[900px]:flex">
-					<code className="font-mono text-xs leading-ui text-ink">$ npm install --global packbat</code>
+					<code className="font-mono text-xs leading-ui text-ink">{`$ ${INSTALL_COMMAND}`}</code>
 					<a className="font-display text-sm leading-ui text-muted" href="/docs">
 						Docs
 					</a>
-					<a className="font-display text-sm leading-ui text-muted" href={githubUrl}>
+					<a className="font-display text-sm leading-ui text-muted" href={GITHUB_URL}>
 						GitHub
 					</a>
 				</div>
 				<div className="border-hairline w-full border bg-ground px-[16px] py-[14px] min-[900px]:hidden">
-					<code className="font-mono text-[12px] leading-[19px] text-ink">$ npm install --global packbat</code>
+					<code className="font-mono text-[12px] leading-[19px] text-ink">{`$ ${INSTALL_COMMAND}`}</code>
 				</div>
 				<div className="flex w-full justify-between font-mono text-[10px] leading-xs text-muted-deep min-[900px]:hidden">
 					<span>Raw archives. Your store.</span>

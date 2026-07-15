@@ -1,4 +1,5 @@
 import { Link } from "@tanstack/react-router";
+import { GITHUB_URL } from "../site";
 import { BatMark } from "./bat-mark";
 
 export function DocsNav() {
@@ -17,7 +18,7 @@ export function DocsNav() {
 						<Link className="text-accent" to="/docs">
 							Docs
 						</Link>
-						<a className="text-muted" href="https://github.com/liamvinberg/packbat">
+						<a className="text-muted" href={GITHUB_URL}>
 							GitHub
 						</a>
 					</div>

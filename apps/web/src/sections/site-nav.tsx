@@ -1,4 +1,5 @@
 import { BatMark } from "../components/bat-mark";
+import { GITHUB_URL } from "../site";
 
 export function SiteNav() {
 	return (
@@ -15,10 +16,7 @@ export function SiteNav() {
 					<a className="font-display text-base leading-ui font-semibold text-ink" href="/#how-it-works">
 						How it works
 					</a>
-					<a
-						className="font-display text-base leading-ui font-semibold text-ink"
-						href="https://github.com/liamvinberg/packbat"
-					>
+					<a className="font-display text-base leading-ui font-semibold text-ink" href={GITHUB_URL}>
 						GitHub
 					</a>
 					<a

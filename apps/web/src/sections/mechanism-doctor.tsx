@@ -1,4 +1,4 @@
-const facts = ["✓ installed", "✓ live", "✓ fresh", "✓ nothing missed"] as const;
+const factLabels = ["✓ installed", "✓ live", "✓ fresh", "✓ nothing missed"] as const;
 
 export function MechanismDoctor() {
 	return (
@@ -13,18 +13,24 @@ export function MechanismDoctor() {
 					</code>
 				</div>
 				<div className="border-hairline grid grid-cols-2 border-y min-[900px]:grid-cols-4">
-					{facts.map((fact, index) => (
-						<h3
-							className={`py-[20px] font-mono text-[12px] leading-ui text-ok min-[900px]:py-[24px] min-[900px]:text-xs ${
-								index % 2 === 1 ? "border-hairline border-l pl-[16px]" : "pr-[12px]"
-							} ${index >= 2 ? "border-hairline border-t min-[900px]:border-t-0" : ""} ${
-								index > 0 ? "min-[900px]:border-hairline min-[900px]:border-l min-[900px]:px-[20px]" : ""
-							}`}
-							key={fact}
-						>
-							{fact}
-						</h3>
-					))}
+					{factLabels.map((fact, index) => {
+						const mobileColumn = index % 2 === 1 ? "border-hairline border-l pl-[16px]" : "pr-[12px]";
+						const mobileRow = index >= 2 ? "border-hairline border-t min-[900px]:border-t-0" : "";
+						const desktopColumn =
+							index === 0
+								? "min-[900px]:pr-[20px]"
+								: `min-[900px]:border-hairline min-[900px]:border-l ${
+										index === 3 ? "min-[900px]:pl-[20px]" : "min-[900px]:px-[20px]"
+									}`;
+						return (
+							<h3
+								className={`py-[20px] font-mono text-[12px] leading-ui text-ok min-[900px]:py-[24px] min-[900px]:text-xs ${mobileColumn} ${mobileRow} ${desktopColumn}`}
+								key={fact}
+							>
+								{fact}
+							</h3>
+						);
+					})}
 				</div>
 			</div>
 		</section>
