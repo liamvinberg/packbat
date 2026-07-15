@@ -18,8 +18,8 @@ archives in a store the user owns. Spec: issue #14. Canonical constraints: `docs
 
 ## Layout
 
-pnpm workspace: `apps/cli` (the tool). Node ≥ 22.15, TypeScript maximal strictness
-(`tsconfig.base.json`), Biome (tabs, width 120), tsup build, tsx dev, Vitest.
+pnpm workspace: `apps/cli` (the tool) and `apps/cloud` (the optional Cloud Worker control plane). Node ≥ 22.15,
+TypeScript maximal strictness (`tsconfig.base.json`), Biome (tabs, width 120), tsup/Workerd builds, tsx dev, Vitest.
 
 ## Conventions
 
