@@ -27,7 +27,11 @@ variable, applies the D1 migrations, stores `ACCESS_TOKEN_SECRET`, `R2_ACCESS_KE
 with `wrangler secret put`, and then deploys the Worker. The R2 API key must be scoped to object read/write access
 on that bucket only; `R2_BUCKET_NAME` is the private bucket's configured name.
 
-Before deployment, run the live hard-quota proof with the same bucket-scoped R2 credentials:
+The live hard-quota proof passed against the production R2 S3 endpoint on 2026-07-16. The signed five-byte PUT never
+stored more than five bytes when the client sent a different header, a longer body, or a shorter body. See
+[`docs/research/r2-content-length-proof.md`](../../docs/research/r2-content-length-proof.md).
+
+Re-run it with the bucket-scoped R2 credentials before changing the upload path:
 
 ```sh
 pnpm -C apps/cloud proof:r2-length
