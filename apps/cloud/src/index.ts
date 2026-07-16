@@ -1,5 +1,6 @@
 import { createApp } from "./app.js";
-import { type BillingBindings, reconcileBillingLifecycle } from "./billing/service.js";
+import { reconcileBillingLifecycle } from "./billing/lifecycle.js";
+import type { BillingBindings } from "./billing/model.js";
 import { reconcileExpiredUploads, reconcileUsageAccounting, type StorageBindings } from "./storage/broker.js";
 
 const app = createApp();

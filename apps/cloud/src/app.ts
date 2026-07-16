@@ -9,14 +9,9 @@ import {
 	timestamp,
 	verifyAccessToken,
 } from "./auth/tokens.js";
-import {
-	type BillingBindings,
-	BillingError,
-	billingStatus,
-	createCheckout,
-	createPortal,
-	handleStripeWebhook,
-} from "./billing/service.js";
+import { billingStatus, createCheckout, createPortal } from "./billing/hosted.js";
+import { type BillingBindings, BillingError } from "./billing/model.js";
+import { handleStripeWebhook } from "./billing/webhook.js";
 import {
 	credentialIsActive,
 	findOrCreateAccount,
