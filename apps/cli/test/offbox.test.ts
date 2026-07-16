@@ -428,7 +428,6 @@ describe.skipIf(!hasRclone)("off-box archive cycle", () => {
 
 	test("rejects section-only and incomplete managed rclone configs at the CLI boundary", async () => {
 		const layout = await makeLayout();
-		const recipient = await identityToRecipient(await generateIdentity());
 		const sourceConfig = join(layout.home, "source-rclone.conf");
 		const argumentsFor = [
 			"init",
@@ -440,7 +439,7 @@ describe.skipIf(!hasRclone)("off-box archive cycle", () => {
 			"--offbox-remote",
 			`packbat:${layout.remote}`,
 			"--age-recipient",
-			recipient,
+			"age1synthetic",
 			"--rclone-config",
 			"managed",
 			"--managed-rclone-config",
