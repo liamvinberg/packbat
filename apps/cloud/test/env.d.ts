@@ -1,6 +1,7 @@
 declare namespace Cloudflare {
 	interface Env {
 		ACCESS_TOKEN_SECRET: string;
+		AUTH_RATE_LIMITER: RateLimit;
 		R2_ACCESS_KEY_ID: string;
 		R2_ACCOUNT_ID: string;
 		R2_BUCKET_NAME: string;

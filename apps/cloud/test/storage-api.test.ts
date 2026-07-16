@@ -2,6 +2,7 @@ import { createScheduledController } from "cloudflare:test";
 import { env, exports } from "cloudflare:workers";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import worker from "../src/index.js";
+import { reconcileUsageAccounting } from "../src/storage/broker.js";
 import { deliverStripeEvent, subscriptionEvent } from "./helpers/stripe.js";
 
 interface LinkedAccount {
@@ -408,6 +409,44 @@ describe("ciphertext uploads", () => {
 			.run();
 
 		await worker.scheduled(createScheduledController({ scheduledTime: Date.now() }), env);
+
+		expect(
+			await env.DB.prepare("SELECT used_bytes, reserved_bytes FROM users WHERE id = ?").bind(linked.account.id).first(),
+		).toEqual({ reserved_bytes: 3, used_bytes: 0 });
+	});
+
+	it("does not erase a reservation admitted concurrently with accounting repair", async () => {
+		mockGitHubUsers({ "github-token": { id: 42_424, login: "octocat" } });
+		const linked = await exchange();
+		const machineRemoteId = await createMachine(linked.accessToken);
+		const currentTime = Math.floor(Date.now() / 1_000);
+		await env.DB.prepare("UPDATE users SET used_bytes = 77, reserved_bytes = 88 WHERE id = ?")
+			.bind(linked.account.id)
+			.run();
+
+		const reconciliation = reconcileUsageAccounting(env.DB, currentTime);
+		const admission = env.DB.batch([
+			env.DB.prepare("UPDATE users SET reserved_bytes = reserved_bytes + 3 WHERE id = ?").bind(linked.account.id),
+			env.DB.prepare(
+				`INSERT INTO upload_reservations (
+					id, user_id, machine_remote_id, logical_object_key, sweep_id, expected_bytes,
+					checksum_sha256, replaced_bytes, idempotency_key, created_at, expires_at, state
+				) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending')`,
+			).bind(
+				crypto.randomUUID(),
+				linked.account.id,
+				machineRemoteId,
+				"codex/concurrent-accounting.age",
+				"concurrent-accounting",
+				3,
+				"checksum",
+				0,
+				"concurrent-accounting",
+				currentTime,
+				currentTime + 300,
+			),
+		]);
+		await Promise.all([reconciliation, admission]);
 
 		expect(
 			await env.DB.prepare("SELECT used_bytes, reserved_bytes FROM users WHERE id = ?").bind(linked.account.id).first(),

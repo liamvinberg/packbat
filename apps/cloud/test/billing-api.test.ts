@@ -121,6 +121,7 @@ describe("hosted billing", () => {
 			"automatic_tax[enabled]": "true",
 			client_reference_id: linked.account.id,
 			customer: "cus_packbat",
+			expires_at: expect.stringMatching(/^\d+$/u),
 			"line_items[0][price]": env.STRIPE_ANNUAL_PRICE_ID,
 			"line_items[0][quantity]": "1",
 			mode: "subscription",
@@ -133,6 +134,167 @@ describe("hosted billing", () => {
 		expect(portal.status).toBe(200);
 		expect(await portal.json()).toEqual({ url: "https://billing.stripe.com/p/session/packbat" });
 		expect(records.at(-1)?.parameters.get("customer")).toBe("cus_packbat");
+	});
+
+	it("admits only one concurrent Checkout and recovers admission after a provider failure", async () => {
+		const records: StripeRequestRecord[] = [];
+		installProviderFake(records);
+		const linked = await exchange();
+		const [monthly, annual] = await Promise.all([
+			exports.default.fetch(
+				jsonRequest(
+					"/v1/billing/checkout",
+					{ idempotencyKey: "concurrent-month", interval: "month" },
+					linked.accessToken,
+				),
+			),
+			exports.default.fetch(
+				jsonRequest(
+					"/v1/billing/checkout",
+					{ idempotencyKey: "concurrent-year", interval: "year" },
+					linked.accessToken,
+				),
+			),
+		]);
+		expect([monthly.status, annual.status].sort()).toEqual([201, 409]);
+		const rejected = monthly.status === 409 ? monthly : annual;
+		expect(await rejected.json()).toEqual({ error: "checkout_in_progress" });
+		expect(records.filter(({ path }) => path === "/v1/customers")).toHaveLength(1);
+		expect(records.filter(({ path }) => path === "/v1/checkout/sessions")).toHaveLength(1);
+		expect(await env.DB.prepare("SELECT COUNT(*) AS count FROM billing_checkout_admissions").first()).toEqual({
+			count: 1,
+		});
+		await env.DB.prepare("UPDATE billing_checkout_admissions SET created_at = 0, expires_at = 1").run();
+		const expiredRecovery = await exports.default.fetch(
+			jsonRequest(
+				"/v1/billing/checkout",
+				{ idempotencyKey: "expired-admission", interval: "month" },
+				linked.accessToken,
+			),
+		);
+		expect(expiredRecovery.status).toBe(201);
+		expect(records.filter(({ path }) => path === "/v1/checkout/sessions")).toHaveLength(2);
+
+		await env.DB.prepare("DELETE FROM billing_checkout_admissions").run();
+		vi.restoreAllMocks();
+		let checkoutAttempts = 0;
+		vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+			const request = new Request(input, init);
+			if (request.url === "https://api.github.com/user") {
+				return Response.json({ id: 42_424, login: "octocat" });
+			}
+			if (request.url === "https://api.stripe.com/v1/checkout/sessions") {
+				checkoutAttempts += 1;
+				return checkoutAttempts === 1
+					? Response.json({ error: { type: "api_error" } }, { status: 500 })
+					: Response.json({ id: "cs_test_recovered", url: "https://checkout.stripe.com/c/pay/recovered" });
+			}
+			throw new Error(`Unexpected provider request: ${request.url}`);
+		});
+		const failed = await exports.default.fetch(
+			jsonRequest(
+				"/v1/billing/checkout",
+				{ idempotencyKey: "provider-failure", interval: "month" },
+				linked.accessToken,
+			),
+		);
+		expect(failed.status).toBe(502);
+		expect(await env.DB.prepare("SELECT COUNT(*) AS count FROM billing_checkout_admissions").first()).toEqual({
+			count: 0,
+		});
+		const recovered = await exports.default.fetch(
+			jsonRequest("/v1/billing/checkout", { idempotencyKey: "provider-retry", interval: "year" }, linked.accessToken),
+		);
+		expect(recovered.status).toBe(201);
+		expect(await recovered.json()).toEqual({ url: "https://checkout.stripe.com/c/pay/recovered" });
+	});
+
+	it("keeps one current provider subscription while allowing resubscription from grace", async () => {
+		const records: StripeRequestRecord[] = [];
+		installProviderFake(records);
+		const linked = await exchange();
+		expect((await checkout(linked.accessToken)).status).toBe(201);
+		const currentTime = Math.floor(Date.now() / 1_000);
+		expect(
+			(
+				await deliverStripeEvent(
+					subscriptionEvent({
+						created: currentTime,
+						customerId: "cus_packbat",
+						eventId: "evt_first_active",
+						status: "active",
+						subscriptionId: "sub_first",
+						userId: linked.account.id,
+					}),
+					currentTime,
+				)
+			).status,
+		).toBe(200);
+		expect(
+			(
+				await deliverStripeEvent(
+					subscriptionEvent({
+						created: currentTime + 1,
+						customerId: "cus_packbat",
+						eventId: "evt_second_while_active",
+						status: "active",
+						subscriptionId: "sub_second",
+						userId: linked.account.id,
+					}),
+					currentTime,
+				)
+			).status,
+		).toBe(200);
+		expect(await env.DB.prepare("SELECT provider_subscription_id FROM billing_subscriptions").first()).toEqual({
+			provider_subscription_id: "sub_first",
+		});
+
+		expect(
+			(
+				await deliverStripeEvent(
+					subscriptionEvent({
+						created: currentTime + 2,
+						customerId: "cus_packbat",
+						eventId: "evt_first_lapsed",
+						status: "canceled",
+						subscriptionId: "sub_first",
+						userId: linked.account.id,
+					}),
+					currentTime,
+				)
+			).status,
+		).toBe(200);
+		expect((await status(linked.accessToken)).state).toBe("grace");
+		expect(
+			(
+				await exports.default.fetch(
+					jsonRequest(
+						"/v1/billing/checkout",
+						{ idempotencyKey: "grace-resubscribe", interval: "year" },
+						linked.accessToken,
+					),
+				)
+			).status,
+		).toBe(201);
+		expect(
+			(
+				await deliverStripeEvent(
+					subscriptionEvent({
+						created: currentTime + 3,
+						customerId: "cus_packbat",
+						eventId: "evt_resubscribed",
+						status: "active",
+						subscriptionId: "sub_resubscribed",
+						userId: linked.account.id,
+					}),
+					currentTime,
+				)
+			).status,
+		).toBe(200);
+		expect(await env.DB.prepare("SELECT provider_subscription_id FROM billing_subscriptions").all()).toMatchObject({
+			results: [{ provider_subscription_id: "sub_resubscribed" }],
+		});
+		expect(await status(linked.accessToken)).toMatchObject({ graceEndsAt: null, state: "active" });
 	});
 
 	it("verifies, deduplicates, and orders subscription webhooks across lapse and reactivation", async () => {
@@ -170,6 +332,10 @@ describe("hosted billing", () => {
 
 		expect((await deliverStripeEvent(incomplete, currentTime)).status).toBe(200);
 		expect((await status(linked.accessToken)).state).toBe("inactive");
+		await env.DB.prepare("UPDATE billing_checkout_admissions SET created_at = 0, expires_at = 1").run();
+		const duplicatePendingSubscription = await checkout(linked.accessToken, "year");
+		expect(duplicatePendingSubscription.status).toBe(409);
+		expect(await duplicatePendingSubscription.json()).toEqual({ error: "subscription_pending" });
 		expect((await deliverStripeEvent(active, currentTime)).status).toBe(200);
 		expect((await deliverStripeEvent(active, currentTime)).status).toBe(200);
 		expect(await status(linked.accessToken)).toMatchObject({ canRestore: true, canUpload: true, state: "active" });

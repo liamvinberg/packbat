@@ -22,10 +22,10 @@ afterEach(() => {
 	vi.restoreAllMocks();
 });
 
-function jsonRequest(path: string, body: unknown): Request {
+function jsonRequest(path: string, body: unknown, connectingIp = "192.0.2.1"): Request {
 	return new Request(`https://api.packbat.dev${path}`, {
 		body: JSON.stringify(body),
-		headers: { "Content-Type": "application/json" },
+		headers: { "CF-Connecting-IP": connectingIp, "Content-Type": "application/json" },
 		method: "POST",
 	});
 }
@@ -109,6 +109,38 @@ describe("GitHub exchange", () => {
 		expect(await env.DB.prepare("SELECT COUNT(*) AS count FROM users").first<{ count: number }>()).toEqual({
 			count: 0,
 		});
+	});
+
+	it("bounds public exchange and refresh work by route and connecting IP without logging the IP", async () => {
+		const provider = vi
+			.spyOn(globalThis, "fetch")
+			.mockResolvedValue(Response.json({ message: "Bad credentials" }, { status: 401 }));
+		const warning = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+		const connectingIp = "198.51.100.24";
+		const exchangeStatuses: number[] = [];
+		for (let index = 0; index < 31; index += 1) {
+			exchangeStatuses.push(
+				(
+					await exports.default.fetch(
+						jsonRequest("/v1/auth/github/exchange", { githubAccessToken: "invalid" }, connectingIp),
+					)
+				).status,
+			);
+		}
+		expect(exchangeStatuses.slice(0, 30)).toEqual(Array.from({ length: 30 }, () => 401));
+		expect(exchangeStatuses.at(-1)).toBe(429);
+		expect(provider).toHaveBeenCalledTimes(30);
+
+		const refreshStatuses: number[] = [];
+		for (let index = 0; index < 31; index += 1) {
+			refreshStatuses.push(
+				(await exports.default.fetch(jsonRequest("/v1/auth/refresh", { refreshToken: "invalid" }, connectingIp)))
+					.status,
+			);
+		}
+		expect(refreshStatuses.slice(0, 30)).toEqual(Array.from({ length: 30 }, () => 401));
+		expect(refreshStatuses.at(-1)).toBe(429);
+		expect(warning).not.toHaveBeenCalled();
 	});
 });
 
@@ -231,6 +263,7 @@ describe("account deletion", () => {
 		expect(completed.status).toBe(204);
 
 		for (const table of [
+			"billing_checkout_admissions",
 			"billing_customers",
 			"billing_subscriptions",
 			"cli_credentials",
