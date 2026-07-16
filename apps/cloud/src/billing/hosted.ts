@@ -103,6 +103,20 @@ async function admitCheckout(
 	if (account.state === "active") {
 		throw new BillingError(409, "subscription_active");
 	}
+	const existingAdmission = await env.DB.prepare(
+		`SELECT expires_at AS expiresAt, idempotency_key AS idempotencyKey, interval
+		FROM billing_checkout_admissions WHERE user_id = ?`,
+	)
+		.bind(userId)
+		.first<{ expiresAt: number; idempotencyKey: string; interval: "month" | "year" }>();
+	if (
+		existingAdmission !== null &&
+		existingAdmission.expiresAt > now &&
+		existingAdmission.idempotencyKey === idempotencyKey &&
+		existingAdmission.interval === interval
+	) {
+		return existingAdmission.expiresAt;
+	}
 	const subscription = await env.DB.prepare(
 		"SELECT status FROM billing_subscriptions WHERE user_id = ? AND status IN ('incomplete', 'trialing', 'active')",
 	)

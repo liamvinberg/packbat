@@ -1,5 +1,5 @@
 import { logOperationalEvent } from "../operations/log.js";
-import { deleteAccountData, type StorageBindings } from "../storage/broker.js";
+import { deleteExpiredGraceAccountData, type StorageBindings } from "../storage/broker.js";
 import type { BillingBindings } from "./model.js";
 
 const WEBHOOK_EVENT_RETENTION_SECONDS = 31 * 24 * 60 * 60;
@@ -10,13 +10,17 @@ async function processExpiredGraceAccounts(env: BillingBindings & StorageBinding
 	const expired = await env.DB.prepare(
 		`SELECT id FROM users
 		WHERE subscription_state = 'grace' AND grace_ends_at <= ?
+			AND NOT EXISTS (
+				SELECT 1 FROM billing_checkout_admissions a
+				WHERE a.user_id = users.id AND a.expires_at > ?
+			)
 		ORDER BY grace_ends_at LIMIT ?`,
 	)
-		.bind(now, GRACE_DELETION_BATCH_SIZE)
+		.bind(now, now, GRACE_DELETION_BATCH_SIZE)
 		.all<{ id: string }>();
 	for (const account of expired.results) {
 		try {
-			await deleteAccountData(env, account.id, now);
+			await deleteExpiredGraceAccountData(env, account.id, now);
 		} catch {
 			logOperationalEvent({
 				accountId: account.id,

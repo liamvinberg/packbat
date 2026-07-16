@@ -810,22 +810,40 @@ export async function reconcileUsageAccounting(binding: D1Database, now: number)
 	}
 }
 
-export async function deleteAccountData(
+async function deleteAccountDataWithGuard(
 	env: StorageBindings,
 	userId: string,
 	now: number,
+	requireExpiredGrace: boolean,
 ): Promise<{ complete: true } | { complete: false; retryAt: number }> {
-	const account = await env.DB.prepare(
-		`UPDATE users SET
+	const account = requireExpiredGrace
+		? await env.DB.prepare(
+				`UPDATE users SET
+					deletion_requested_at = COALESCE(deletion_requested_at, ?),
+					delete_after = COALESCE(
+						delete_after,
+						MAX(?, COALESCE((SELECT MAX(expires_at) + 1 FROM upload_reservations WHERE user_id = users.id), ?))
+					)
+				WHERE id = ? AND subscription_state = 'grace' AND grace_ends_at <= ?
+					AND NOT EXISTS (
+						SELECT 1 FROM billing_checkout_admissions a
+						WHERE a.user_id = users.id AND a.expires_at > ?
+					)
+				RETURNING storage_prefix AS storagePrefix, delete_after AS deleteAfter`,
+			)
+				.bind(now, now, now, userId, now, now)
+				.first<{ deleteAfter: number; storagePrefix: string }>()
+		: await env.DB.prepare(
+				`UPDATE users SET
 			deletion_requested_at = COALESCE(deletion_requested_at, ?),
 			delete_after = COALESCE(
 				delete_after,
 				MAX(?, COALESCE((SELECT MAX(expires_at) + 1 FROM upload_reservations WHERE user_id = users.id), ?))
 			)
 		WHERE id = ? RETURNING storage_prefix AS storagePrefix, delete_after AS deleteAfter`,
-	)
-		.bind(now, now, now, userId)
-		.first<{ deleteAfter: number; storagePrefix: string }>();
+			)
+				.bind(now, now, now, userId)
+				.first<{ deleteAfter: number; storagePrefix: string }>();
 	if (account === null) {
 		return { complete: true };
 	}
@@ -876,4 +894,20 @@ export async function deleteAccountData(
 	}
 	await env.DB.prepare("DELETE FROM users WHERE id = ?").bind(userId).run();
 	return { complete: true };
+}
+
+export async function deleteAccountData(
+	env: StorageBindings,
+	userId: string,
+	now: number,
+): Promise<{ complete: true } | { complete: false; retryAt: number }> {
+	return await deleteAccountDataWithGuard(env, userId, now, false);
+}
+
+export async function deleteExpiredGraceAccountData(
+	env: StorageBindings,
+	userId: string,
+	now: number,
+): Promise<{ complete: true } | { complete: false; retryAt: number }> {
+	return await deleteAccountDataWithGuard(env, userId, now, true);
 }
