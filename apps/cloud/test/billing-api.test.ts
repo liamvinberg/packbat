@@ -136,7 +136,7 @@ describe("hosted billing", () => {
 		expect(records.at(-1)?.parameters.get("customer")).toBe("cus_packbat");
 	});
 
-	it("admits only one concurrent Checkout and recovers admission after a provider failure", async () => {
+	it("admits one concurrent Checkout and releases its admission after a definitive validation rejection", async () => {
 		const records: StripeRequestRecord[] = [];
 		installProviderFake(records);
 		const linked = await exchange();
@@ -186,7 +186,7 @@ describe("hosted billing", () => {
 			if (request.url === "https://api.stripe.com/v1/checkout/sessions") {
 				checkoutAttempts += 1;
 				return checkoutAttempts === 1
-					? Response.json({ error: { type: "api_error" } }, { status: 500 })
+					? Response.json({ error: { type: "invalid_request_error" } }, { status: 400 })
 					: Response.json({ id: "cs_test_recovered", url: "https://checkout.stripe.com/c/pay/recovered" });
 			}
 			throw new Error(`Unexpected provider request: ${request.url}`);
@@ -245,6 +245,82 @@ describe("hosted billing", () => {
 		expect(differentInterval.status).toBe(409);
 		expect(await differentInterval.json()).toEqual({ error: "checkout_in_progress" });
 		expect(records.filter(({ path }) => path === "/v1/checkout/sessions")).toHaveLength(2);
+	});
+
+	it("keeps a shared admission when an exact concurrent retry has an uncertain failure", async () => {
+		const initialRecords: StripeRequestRecord[] = [];
+		installProviderFake(initialRecords);
+		const linked = await exchange();
+		vi.restoreAllMocks();
+		let sessionAttempts = 0;
+		let markSecondSessionStarted: (() => void) | undefined;
+		const secondSessionStarted = new Promise<void>((resolve) => {
+			markSecondSessionStarted = resolve;
+		});
+		vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+			const providerRequest = new Request(input, init);
+			if (providerRequest.url === "https://api.stripe.com/v1/customers") {
+				return Response.json({ id: "cus_packbat" });
+			}
+			if (providerRequest.url !== "https://api.stripe.com/v1/checkout/sessions") {
+				throw new Error(`Unexpected provider request: ${providerRequest.url}`);
+			}
+			sessionAttempts += 1;
+			if (sessionAttempts === 1) {
+				await secondSessionStarted;
+				return Response.json({ id: "cs_test_shared", url: "https://checkout.stripe.com/c/pay/shared" });
+			}
+			if (sessionAttempts === 2) {
+				markSecondSessionStarted?.();
+				throw new TypeError("Stripe response was lost");
+			}
+			if (sessionAttempts === 3) {
+				return Response.json({ error: { type: "idempotency_error" } }, { status: 409 });
+			}
+			return Response.json({ id: "cs_test_shared", url: "https://checkout.stripe.com/c/pay/shared" });
+		});
+
+		const exactRequest = { idempotencyKey: "shared-checkout", interval: "month" as const };
+		const [first, uncertainRetry] = await Promise.all([
+			exports.default.fetch(jsonRequest("/v1/billing/checkout", exactRequest, linked.accessToken)),
+			exports.default.fetch(jsonRequest("/v1/billing/checkout", exactRequest, linked.accessToken)),
+		]);
+		expect([first.status, uncertainRetry.status].sort()).toEqual([201, 502]);
+		expect(
+			await env.DB.prepare("SELECT idempotency_key, interval FROM billing_checkout_admissions WHERE user_id = ?")
+				.bind(linked.account.id)
+				.first(),
+		).toEqual({ idempotency_key: "shared-checkout", interval: "month" });
+
+		const differentKey = await exports.default.fetch(
+			jsonRequest("/v1/billing/checkout", { idempotencyKey: "not-shared", interval: "month" }, linked.accessToken),
+		);
+		expect(differentKey.status).toBe(409);
+		expect(await differentKey.json()).toEqual({ error: "checkout_in_progress" });
+		const providerConflict = await exports.default.fetch(
+			jsonRequest("/v1/billing/checkout", exactRequest, linked.accessToken),
+		);
+		expect(providerConflict.status).toBe(502);
+		expect(
+			await env.DB.prepare("SELECT idempotency_key FROM billing_checkout_admissions WHERE user_id = ?")
+				.bind(linked.account.id)
+				.first(),
+		).toEqual({ idempotency_key: "shared-checkout" });
+		const blockedAfterConflict = await exports.default.fetch(
+			jsonRequest(
+				"/v1/billing/checkout",
+				{ idempotencyKey: "still-not-shared", interval: "month" },
+				linked.accessToken,
+			),
+		);
+		expect(blockedAfterConflict.status).toBe(409);
+		expect(await blockedAfterConflict.json()).toEqual({ error: "checkout_in_progress" });
+		const recovered = await exports.default.fetch(
+			jsonRequest("/v1/billing/checkout", exactRequest, linked.accessToken),
+		);
+		expect(recovered.status).toBe(201);
+		expect(await recovered.json()).toEqual({ url: "https://checkout.stripe.com/c/pay/shared" });
+		expect(sessionAttempts).toBe(4);
 	});
 
 	it("keeps one current provider subscription while allowing resubscription from grace", async () => {
