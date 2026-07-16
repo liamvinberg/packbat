@@ -1,3 +1,14 @@
+CREATE TABLE `billing_checkout_admissions` (
+	`user_id` text PRIMARY KEY NOT NULL,
+	`idempotency_key` text NOT NULL,
+	`interval` text NOT NULL,
+	`created_at` integer NOT NULL,
+	`expires_at` integer NOT NULL,
+	FOREIGN KEY (`user_id`) REFERENCES `users`(`id`) ON UPDATE no action ON DELETE cascade,
+	CONSTRAINT "billing_checkout_admissions_interval_valid" CHECK("billing_checkout_admissions"."interval" IN ('month', 'year')),
+	CONSTRAINT "billing_checkout_admissions_expiry_after_creation" CHECK("billing_checkout_admissions"."expires_at" > "billing_checkout_admissions"."created_at")
+);
+--> statement-breakpoint
 CREATE TABLE `billing_subscriptions` (
 	`provider_subscription_id` text PRIMARY KEY NOT NULL,
 	`user_id` text NOT NULL,
@@ -10,7 +21,7 @@ CREATE TABLE `billing_subscriptions` (
 	CONSTRAINT "billing_subscriptions_status_valid" CHECK("billing_subscriptions"."status" IN ('incomplete', 'incomplete_expired', 'trialing', 'active', 'past_due', 'canceled', 'unpaid', 'paused'))
 );
 --> statement-breakpoint
-CREATE INDEX `billing_subscriptions_user_id_index` ON `billing_subscriptions` (`user_id`);--> statement-breakpoint
+CREATE UNIQUE INDEX `billing_subscriptions_user_id_unique` ON `billing_subscriptions` (`user_id`);--> statement-breakpoint
 CREATE INDEX `billing_subscriptions_customer_id_index` ON `billing_subscriptions` (`provider_customer_id`);--> statement-breakpoint
 CREATE TABLE `service_alerts` (
 	`key` text PRIMARY KEY NOT NULL,

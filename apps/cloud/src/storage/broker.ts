@@ -773,39 +773,33 @@ export async function createDownload(
 }
 
 export async function reconcileUsageAccounting(binding: D1Database, now: number): Promise<void> {
-	const accounts = await binding
+	const repaired = await binding
 		.prepare(
-			`SELECT
-				u.id,
-				u.reserved_bytes AS reservedBytes,
-				u.used_bytes AS usedBytes,
-				COALESCE((
-					SELECT SUM(r.expected_bytes) FROM upload_reservations r
-					WHERE r.user_id = u.id AND r.state = 'pending'
-				), 0) AS expectedReservedBytes,
-				COALESCE((
-					SELECT SUM(o.bytes) FROM object_ledger o WHERE o.user_id = u.id
+			`UPDATE users SET
+				used_bytes = COALESCE((
+					SELECT SUM(o.bytes) FROM object_ledger o WHERE o.user_id = users.id
 				), 0) - COALESCE((
 					SELECT SUM(r.replaced_bytes) FROM upload_reservations r
-					WHERE r.user_id = u.id AND r.state = 'pending'
-				), 0) AS expectedUsedBytes
-			FROM users u`,
+					WHERE r.user_id = users.id AND r.state = 'pending'
+				), 0),
+				reserved_bytes = COALESCE((
+					SELECT SUM(r.expected_bytes) FROM upload_reservations r
+					WHERE r.user_id = users.id AND r.state = 'pending'
+				), 0)
+			WHERE used_bytes <> COALESCE((
+					SELECT SUM(o.bytes) FROM object_ledger o WHERE o.user_id = users.id
+				), 0) - COALESCE((
+					SELECT SUM(r.replaced_bytes) FROM upload_reservations r
+					WHERE r.user_id = users.id AND r.state = 'pending'
+				), 0)
+				OR reserved_bytes <> COALESCE((
+					SELECT SUM(r.expected_bytes) FROM upload_reservations r
+					WHERE r.user_id = users.id AND r.state = 'pending'
+				), 0)
+			RETURNING id`,
 		)
-		.all<{
-			expectedReservedBytes: number;
-			expectedUsedBytes: number;
-			id: string;
-			reservedBytes: number;
-			usedBytes: number;
-		}>();
-	for (const account of accounts.results) {
-		if (account.usedBytes === account.expectedUsedBytes && account.reservedBytes === account.expectedReservedBytes) {
-			continue;
-		}
-		await binding
-			.prepare("UPDATE users SET used_bytes = ?, reserved_bytes = ? WHERE id = ?")
-			.bind(account.expectedUsedBytes, account.expectedReservedBytes, account.id)
-			.run();
+		.all<{ id: string }>();
+	for (const account of repaired.results) {
 		logOperationalEvent({
 			accountId: account.id,
 			event: "accounting_reconciled",

@@ -46,6 +46,7 @@ type CloudBindings = Env &
 	BillingBindings & {
 		ACCESS_TOKEN_SECRET: string;
 		API_RATE_LIMITER: RateLimiter;
+		AUTH_RATE_LIMITER: RateLimiter;
 		BILLING_RATE_LIMITER: RateLimiter;
 		DOWNLOAD_RATE_LIMITER: RateLimiter;
 		WEBHOOK_RATE_LIMITER: RateLimiter;
@@ -120,6 +121,17 @@ async function enforceRateLimit(
 ): Promise<void> {
 	if (!(await limiter.limit({ key })).success) {
 		await logAccountOperationalEventOnce(binding, { accountId, event: "rate_limited", now, reason });
+		throw new ApiError(429, "rate_limited");
+	}
+}
+
+async function enforcePublicAuthRateLimit(
+	limiter: RateLimiter,
+	request: Request,
+	routeClass: "exchange" | "refresh",
+): Promise<void> {
+	const connectingIp = request.headers.get("CF-Connecting-IP") ?? "unknown";
+	if (!(await limiter.limit({ key: `${routeClass}:${connectingIp}` })).success) {
 		throw new ApiError(429, "rate_limited");
 	}
 }
@@ -215,6 +227,7 @@ export function createApp() {
 	app.get("/healthz", (context) => context.json({ ok: true }));
 
 	app.post("/v1/auth/github/exchange", async (context) => {
+		await enforcePublicAuthRateLimit(context.env.AUTH_RATE_LIMITER, context.req.raw, "exchange");
 		const { githubAccessToken } = await readJson(context.req.raw, exchangeSchema);
 		const identity = await verifyGitHubAccessToken(githubAccessToken);
 		if (identity === null) {
@@ -229,6 +242,7 @@ export function createApp() {
 	});
 
 	app.post("/v1/auth/refresh", async (context) => {
+		await enforcePublicAuthRateLimit(context.env.AUTH_RATE_LIMITER, context.req.raw, "refresh");
 		const { refreshToken: value } = await readJson(context.req.raw, refreshSchema);
 		const refreshToken = await parseRefreshToken(value);
 		if (refreshToken === null) {

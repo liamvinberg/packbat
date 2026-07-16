@@ -1,9 +1,77 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "dc1a0b8e-2335-4054-bfb6-47f05bd7eaa7",
+  "id": "2bacdf81-384e-450e-b2df-e28dff4a245e",
   "prevId": "fde85f0a-522d-4575-ae56-32b563bb3296",
   "tables": {
+    "billing_checkout_admissions": {
+      "name": "billing_checkout_admissions",
+      "columns": {
+        "user_id": {
+          "name": "user_id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "idempotency_key": {
+          "name": "idempotency_key",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "interval": {
+          "name": "interval",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "expires_at": {
+          "name": "expires_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "billing_checkout_admissions_user_id_users_id_fk": {
+          "name": "billing_checkout_admissions_user_id_users_id_fk",
+          "tableFrom": "billing_checkout_admissions",
+          "tableTo": "users",
+          "columnsFrom": [
+            "user_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {
+        "billing_checkout_admissions_interval_valid": {
+          "name": "billing_checkout_admissions_interval_valid",
+          "value": "\"billing_checkout_admissions\".\"interval\" IN ('month', 'year')"
+        },
+        "billing_checkout_admissions_expiry_after_creation": {
+          "name": "billing_checkout_admissions_expiry_after_creation",
+          "value": "\"billing_checkout_admissions\".\"expires_at\" > \"billing_checkout_admissions\".\"created_at\""
+        }
+      }
+    },
     "billing_customers": {
       "name": "billing_customers",
       "columns": {
@@ -124,12 +192,12 @@
         }
       },
       "indexes": {
-        "billing_subscriptions_user_id_index": {
-          "name": "billing_subscriptions_user_id_index",
+        "billing_subscriptions_user_id_unique": {
+          "name": "billing_subscriptions_user_id_unique",
           "columns": [
             "user_id"
           ],
-          "isUnique": false
+          "isUnique": true
         },
         "billing_subscriptions_customer_id_index": {
           "name": "billing_subscriptions_customer_id_index",

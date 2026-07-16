@@ -25,6 +25,11 @@
 	},
 	"ratelimits": [
 		{
+			"name": "AUTH_RATE_LIMITER",
+			"namespace_id": "3305",
+			"simple": { "limit": 30, "period": 60 }
+		},
+		{
 			"name": "API_RATE_LIMITER",
 			"namespace_id": "3301",
 			"simple": { "limit": 600, "period": 60 }

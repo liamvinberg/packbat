@@ -191,6 +191,23 @@ export const billingCustomers = sqliteTable(
 	],
 );
 
+export const billingCheckoutAdmissions = sqliteTable(
+	"billing_checkout_admissions",
+	{
+		userId: text("user_id")
+			.primaryKey()
+			.references(() => users.id, { onDelete: "cascade" }),
+		idempotencyKey: text("idempotency_key").notNull(),
+		interval: text("interval", { enum: ["month", "year"] }).notNull(),
+		createdAt: integer("created_at").notNull(),
+		expiresAt: integer("expires_at").notNull(),
+	},
+	(table) => [
+		check("billing_checkout_admissions_interval_valid", sql`${table.interval} IN ('month', 'year')`),
+		check("billing_checkout_admissions_expiry_after_creation", sql`${table.expiresAt} > ${table.createdAt}`),
+	],
+);
+
 export const billingSubscriptions = sqliteTable(
 	"billing_subscriptions",
 	{
@@ -205,7 +222,7 @@ export const billingSubscriptions = sqliteTable(
 		updatedAt: integer("updated_at").notNull(),
 	},
 	(table) => [
-		index("billing_subscriptions_user_id_index").on(table.userId),
+		uniqueIndex("billing_subscriptions_user_id_unique").on(table.userId),
 		index("billing_subscriptions_customer_id_index").on(table.providerCustomerId),
 		check(
 			"billing_subscriptions_status_valid",
