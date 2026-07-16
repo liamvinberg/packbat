@@ -60,14 +60,22 @@ tolerance. Event IDs are deduplicated, older subscription snapshots cannot overw
 conflicts fail closed rather than restoring upload access. See [Stripe's webhook contract](https://docs.stripe.com/webhooks)
 and [subscription lifecycle](https://docs.stripe.com/billing/subscriptions/webhooks).
 
+Checkout admission is durable before the first Stripe request. One account can hold one 31-minute Checkout admission
+and one current provider subscription; the admission expires with the hosted Session and is released immediately if
+Stripe creation fails. A lapsed account in grace may start a replacement Checkout, while an active, trialing, or
+incomplete subscription blocks a second one. Stripe documents the request fields and the 30-minute minimum Session
+expiry in its [Checkout Session API](https://docs.stripe.com/api/checkout/sessions/create).
+
 ## Abuse and cost controls
 
 The Worker has account-keyed Cloudflare Rate Limiting bindings: 600 authenticated API requests, 10 billing session
-requests, and 120 download-authority requests per minute. The public Stripe endpoint is capped at 300 deliveries per
-minute per Cloudflare location before signature work or logging. These counters are deliberately enforcement state,
-not analytics. Cloudflare documents that the binding is permissive and local to a Cloudflare location, so production
-must also enable account-level billing notifications and Worker error notifications; a measured distributed attack
-would require a stricter global rule, not silent product telemetry.
+requests, and 120 download-authority requests per minute. GitHub exchange and refresh are each capped at 30 requests
+per minute by route plus Cloudflare connecting IP before JSON parsing, outbound GitHub access, or credential work;
+that IP exists only as the limiter key and is never persisted or logged. The public Stripe endpoint is capped at 300
+deliveries per minute per Cloudflare location before signature work or logging. These counters are deliberately
+enforcement state, not analytics. Cloudflare documents that the binding is permissive and local to a Cloudflare
+location, so production must also enable account-level billing notifications and Worker error notifications; a
+measured distributed attack would require a stricter global rule, not silent product telemetry.
 
 `STORAGE_ALERT_BYTES` is an aggregate ciphertext-plus-reservation threshold. The scheduled worker emits one
 `storage_cost_threshold` warning per day while it is crossed. Per-account quota, rate-limit, accounting-drift, and
@@ -89,13 +97,15 @@ stores more than the signed length, and removes every synthetic proof object.
 
 ## API
 
-- `POST /v1/auth/github/exchange` verifies a GitHub access token through `/user` and issues Packbat credentials.
-- `POST /v1/auth/refresh` rotates a refresh token. Each refresh token works once.
+- `POST /v1/auth/github/exchange` rate-limits before verifying a GitHub access token through `/user` and issuing
+  Packbat credentials.
+- `POST /v1/auth/refresh` rate-limits before credential lookup and rotates a refresh token once.
 - `DELETE /v1/auth/credential` revokes the authenticated CLI credential.
 - `GET /v1/billing/status` returns `inactive`, `active`, or `grace`, the grace deadline, upload/restore admission,
   and authoritative used/reserved bytes. This is the continuation contract for `packbat cloud link`.
-- `POST /v1/billing/checkout` accepts `interval` (`month` or `year`) plus an idempotency key and returns one Stripe
-  hosted Checkout URL. A Stripe Customer ID is created and stored only when this endpoint first runs.
+- `POST /v1/billing/checkout` accepts `interval` (`month` or `year`) plus an idempotency key, atomically admits one
+  pending Checkout per account, and returns its Stripe-hosted URL. A Stripe Customer ID is created and stored only
+  when this endpoint first runs.
 - `POST /v1/billing/portal` returns a short-lived Stripe-hosted Customer Portal URL.
 - `POST /v1/billing/webhook` is the unauthenticated, signature-verified Stripe lifecycle endpoint.
 - `POST /v1/machines` registers an opaque remote machine namespace.
