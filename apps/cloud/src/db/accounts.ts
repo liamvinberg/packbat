@@ -10,9 +10,11 @@ import { base64Url } from "../base64-url.js";
 import { CLOUD_QUOTA_BYTES, cliCredentials, users } from "./schema.js";
 
 export interface Account {
+	graceEndsAt: number | null;
 	id: string;
 	quotaBytes: number;
 	reservedBytes: number;
+	subscriptionState: "active" | "grace" | "inactive";
 	usedBytes: number;
 }
 
@@ -28,9 +30,11 @@ function randomStoragePrefix(): string {
 
 function toAccount(user: typeof users.$inferSelect): Account {
 	return {
+		graceEndsAt: user.graceEndsAt,
 		id: user.id,
 		quotaBytes: user.quotaBytes,
 		reservedBytes: user.reservedBytes,
+		subscriptionState: user.subscriptionState,
 		usedBytes: user.usedBytes,
 	};
 }

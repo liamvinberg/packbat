@@ -3,6 +3,18 @@ import { check, foreignKey, index, integer, primaryKey, sqliteTable, text, uniqu
 
 export const CLOUD_QUOTA_BYTES = 100_000_000_000;
 
+export const SUBSCRIPTION_STATES = ["inactive", "active", "grace"] as const;
+export const STRIPE_SUBSCRIPTION_STATUSES = [
+	"incomplete",
+	"incomplete_expired",
+	"trialing",
+	"active",
+	"past_due",
+	"canceled",
+	"unpaid",
+	"paused",
+] as const;
+
 export const users = sqliteTable(
 	"users",
 	{
@@ -13,6 +25,10 @@ export const users = sqliteTable(
 		usedBytes: integer("used_bytes").notNull(),
 		reservedBytes: integer("reserved_bytes").notNull(),
 		storagePrefix: text("storage_prefix").notNull(),
+		subscriptionActivatedAt: integer("subscription_activated_at"),
+		subscriptionState: text("subscription_state", { enum: SUBSCRIPTION_STATES }).notNull().default("inactive"),
+		graceStartedAt: integer("grace_started_at"),
+		graceEndsAt: integer("grace_ends_at"),
 		deletionRequestedAt: integer("deletion_requested_at"),
 		deleteAfter: integer("delete_after"),
 	},
@@ -26,6 +42,26 @@ export const users = sqliteTable(
 		check("users_quota_bytes_nonnegative", sql`${table.quotaBytes} >= 0`),
 		check("users_used_bytes_nonnegative", sql`${table.usedBytes} >= 0`),
 		check("users_reserved_bytes_nonnegative", sql`${table.reservedBytes} >= 0`),
+		check("users_subscription_state_valid", sql`${table.subscriptionState} IN ('inactive', 'active', 'grace')`),
+		check(
+			"users_subscription_lifecycle_valid",
+			sql`(
+				${table.subscriptionState} = 'inactive'
+				AND ${table.subscriptionActivatedAt} IS NULL
+				AND ${table.graceStartedAt} IS NULL
+				AND ${table.graceEndsAt} IS NULL
+			) OR (
+				${table.subscriptionState} = 'active'
+				AND ${table.subscriptionActivatedAt} IS NOT NULL
+				AND ${table.graceStartedAt} IS NULL
+				AND ${table.graceEndsAt} IS NULL
+			) OR (
+				${table.subscriptionState} = 'grace'
+				AND ${table.subscriptionActivatedAt} IS NOT NULL
+				AND ${table.graceStartedAt} IS NOT NULL
+				AND ${table.graceEndsAt} > ${table.graceStartedAt}
+			)`,
+		),
 	],
 );
 
@@ -153,4 +189,56 @@ export const billingCustomers = sqliteTable(
 		uniqueIndex("billing_customers_provider_customer_id_unique").on(table.provider, table.providerCustomerId),
 		check("billing_customers_provider_valid", sql`${table.provider} = 'stripe'`),
 	],
+);
+
+export const billingSubscriptions = sqliteTable(
+	"billing_subscriptions",
+	{
+		providerSubscriptionId: text("provider_subscription_id").primaryKey(),
+		userId: text("user_id")
+			.notNull()
+			.references(() => users.id, { onDelete: "cascade" }),
+		providerCustomerId: text("provider_customer_id").notNull(),
+		priceId: text("price_id").notNull(),
+		status: text("status", { enum: STRIPE_SUBSCRIPTION_STATUSES }).notNull(),
+		providerEventCreatedAt: integer("provider_event_created_at").notNull(),
+		updatedAt: integer("updated_at").notNull(),
+	},
+	(table) => [
+		index("billing_subscriptions_user_id_index").on(table.userId),
+		index("billing_subscriptions_customer_id_index").on(table.providerCustomerId),
+		check(
+			"billing_subscriptions_status_valid",
+			sql`${table.status} IN ('incomplete', 'incomplete_expired', 'trialing', 'active', 'past_due', 'canceled', 'unpaid', 'paused')`,
+		),
+	],
+);
+
+export const stripeWebhookEvents = sqliteTable(
+	"stripe_webhook_events",
+	{
+		id: text("id").primaryKey(),
+		userId: text("user_id")
+			.notNull()
+			.references(() => users.id, { onDelete: "cascade" }),
+		eventType: text("event_type").notNull(),
+		objectId: text("object_id").notNull(),
+		eventCreatedAt: integer("event_created_at").notNull(),
+		receivedAt: integer("received_at").notNull(),
+		processedAt: integer("processed_at"),
+	},
+	(table) => [
+		index("stripe_webhook_events_user_id_index").on(table.userId),
+		index("stripe_webhook_events_processed_at_index").on(table.processedAt),
+	],
+);
+
+export const serviceAlerts = sqliteTable(
+	"service_alerts",
+	{
+		key: text("key").primaryKey(),
+		userId: text("user_id").references(() => users.id, { onDelete: "cascade" }),
+		lastEmittedAt: integer("last_emitted_at").notNull(),
+	},
+	(table) => [index("service_alerts_user_id_index").on(table.userId)],
 );

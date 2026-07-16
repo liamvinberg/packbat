@@ -10,6 +10,14 @@ import {
 	verifyAccessToken,
 } from "./auth/tokens.js";
 import {
+	type BillingBindings,
+	BillingError,
+	billingStatus,
+	createCheckout,
+	createPortal,
+	handleStripeWebhook,
+} from "./billing/service.js";
+import {
 	credentialIsActive,
 	findOrCreateAccount,
 	issueCredential,
@@ -17,6 +25,7 @@ import {
 	rotateCredential,
 } from "./db/accounts.js";
 import { CLOUD_QUOTA_BYTES } from "./db/schema.js";
+import { logAccountOperationalEventOnce, type OperationalReason } from "./operations/log.js";
 import {
 	createDownload,
 	createMachineRemote,
@@ -28,7 +37,19 @@ import {
 } from "./storage/broker.js";
 import { INDEX_OBJECT_KEY, isLogicalObjectKey } from "./storage/object-key.js";
 
-type CloudBindings = Env & StorageBindings & { ACCESS_TOKEN_SECRET: string };
+interface RateLimiter {
+	limit(input: { key: string }): Promise<{ success: boolean }>;
+}
+
+type CloudBindings = Env &
+	StorageBindings &
+	BillingBindings & {
+		ACCESS_TOKEN_SECRET: string;
+		API_RATE_LIMITER: RateLimiter;
+		BILLING_RATE_LIMITER: RateLimiter;
+		DOWNLOAD_RATE_LIMITER: RateLimiter;
+		WEBHOOK_RATE_LIMITER: RateLimiter;
+	};
 
 interface CloudVariables {
 	principal: AccessPrincipal;
@@ -75,13 +96,31 @@ const downloadSchema = z.strictObject({
 	machineRemoteId: machineRemoteIdSchema,
 });
 const reservationIdSchema = z.uuid();
+const checkoutSchema = z.strictObject({
+	idempotencyKey: z.string().min(1).max(128),
+	interval: z.enum(["month", "year"]),
+});
 
 class ApiError extends Error {
 	constructor(
-		readonly status: 400 | 401,
+		readonly status: 400 | 401 | 429,
 		readonly code: string,
 	) {
 		super(code);
+	}
+}
+
+async function enforceRateLimit(
+	binding: D1Database,
+	limiter: RateLimiter,
+	key: string,
+	accountId: string,
+	reason: Extract<OperationalReason, "api_requests" | "billing_requests" | "download_requests">,
+	now: number,
+): Promise<void> {
+	if (!(await limiter.limit({ key })).success) {
+		await logAccountOperationalEventOnce(binding, { accountId, event: "rate_limited", now, reason });
+		throw new ApiError(429, "rate_limited");
 	}
 }
 
@@ -116,6 +155,14 @@ function authMiddleware(): MiddlewareHandler<CloudHono> {
 		if (principal === null) {
 			return context.json({ error: "invalid_access_token" }, 401);
 		}
+		await enforceRateLimit(
+			context.env.DB,
+			context.env.API_RATE_LIMITER,
+			principal.userId,
+			principal.userId,
+			"api_requests",
+			now(),
+		);
 		context.set("principal", principal);
 		await next();
 	};
@@ -143,9 +190,11 @@ async function tokenResponse(
 		accessToken: accessToken.value,
 		accessTokenExpiresAt: timestamp(accessToken.expiresAt),
 		account: {
+			graceEndsAt: credential.account.graceEndsAt === null ? null : timestamp(credential.account.graceEndsAt),
 			id: credential.account.id,
 			quotaBytes: credential.account.quotaBytes,
 			reservedBytes: credential.account.reservedBytes,
+			subscriptionState: credential.account.subscriptionState,
 			usedBytes: credential.account.usedBytes,
 			...extra,
 		},
@@ -190,6 +239,53 @@ export function createApp() {
 			throw new ApiError(401, "invalid_refresh_token");
 		}
 		return context.json(await tokenResponse(credential, context.env.ACCESS_TOKEN_SECRET));
+	});
+
+	app.post("/v1/billing/webhook", async (context) => {
+		if (!(await context.env.WEBHOOK_RATE_LIMITER.limit({ key: "stripe" })).success) {
+			return context.json({ error: "rate_limited" }, 429);
+		}
+		await handleStripeWebhook(
+			context.env,
+			await context.req.text(),
+			context.req.header("Stripe-Signature") ?? null,
+			now(),
+		);
+		return context.json({ received: true });
+	});
+
+	app.get("/v1/billing/status", authMiddleware(), async (context) => {
+		return context.json(await billingStatus(context.env, context.get("principal").userId, now()));
+	});
+
+	app.post("/v1/billing/checkout", authMiddleware(), async (context) => {
+		const principal = context.get("principal");
+		await enforceRateLimit(
+			context.env.DB,
+			context.env.BILLING_RATE_LIMITER,
+			principal.userId,
+			principal.userId,
+			"billing_requests",
+			now(),
+		);
+		const input = await readJson(context.req.raw, checkoutSchema);
+		return context.json(
+			await createCheckout(context.env, principal.userId, input.interval, input.idempotencyKey, now()),
+			201,
+		);
+	});
+
+	app.post("/v1/billing/portal", authMiddleware(), async (context) => {
+		const principal = context.get("principal");
+		await enforceRateLimit(
+			context.env.DB,
+			context.env.BILLING_RATE_LIMITER,
+			principal.userId,
+			principal.userId,
+			"billing_requests",
+			now(),
+		);
+		return context.json(await createPortal(context.env, principal.userId));
 	});
 
 	app.delete("/v1/auth/credential", authMiddleware(), async (context) => {
@@ -237,10 +333,19 @@ export function createApp() {
 	});
 
 	app.post("/v1/downloads", authMiddleware(), async (context) => {
+		const principal = context.get("principal");
+		await enforceRateLimit(
+			context.env.DB,
+			context.env.DOWNLOAD_RATE_LIMITER,
+			principal.userId,
+			principal.userId,
+			"download_requests",
+			now(),
+		);
 		const input = await readJson(context.req.raw, downloadSchema);
 		const download = await createDownload(
 			context.env,
-			context.get("principal").userId,
+			principal.userId,
 			input.machineRemoteId,
 			input.logicalObjectKey,
 			now(),
@@ -257,7 +362,7 @@ export function createApp() {
 
 	app.notFound((context) => context.json({ error: "not_found" }, 404));
 	app.onError((error, context) => {
-		if (error instanceof ApiError || error instanceof StorageError) {
+		if (error instanceof ApiError || error instanceof BillingError || error instanceof StorageError) {
 			return context.json({ error: error.code }, error.status);
 		}
 		return context.json({ error: "internal_error" }, 500);

@@ -1,8 +1,9 @@
 import { base64Url } from "../base64-url.js";
+import { logAccountOperationalEventOnce, logOperationalEvent } from "../operations/log.js";
 import { INDEX_OBJECT_KEY, objectKey, userObjectPrefix } from "./object-key.js";
 import { OBJECT_CONTENT_TYPE, signDownload, signUpload } from "./r2-signing.js";
 
-type StorageErrorStatus = 404 | 409 | 413;
+type StorageErrorStatus = 402 | 404 | 409 | 413;
 
 export class StorageError extends Error {
 	constructor(
@@ -48,6 +49,7 @@ interface ReservationContext {
 	replacedEtag: string | null;
 	state: "completed" | "expired" | "pending";
 	storagePrefix: string;
+	subscriptionState: "active" | "grace" | "inactive";
 	sweepId: string;
 	userId: string;
 }
@@ -73,6 +75,7 @@ interface ReservationDiagnosis {
 	quotaBytes: number;
 	replacedBytes: number;
 	reservedBytes: number;
+	subscriptionState: "active" | "grace" | "inactive";
 	sweepClosed: number;
 	usedBytes: number;
 }
@@ -145,6 +148,7 @@ async function getReservation(
 				r.replaced_etag AS replacedEtag,
 				r.state,
 				u.storage_prefix AS storagePrefix,
+				u.subscription_state AS subscriptionState,
 				r.sweep_id AS sweepId,
 				r.user_id AS userId
 			FROM upload_reservations r
@@ -406,7 +410,8 @@ export async function createMachineRemote(binding: D1Database, userId: string, n
 	const result = await binding
 		.prepare(
 			`INSERT INTO machine_remotes (id, user_id, created_at)
-			SELECT ?, id, ? FROM users WHERE id = ? AND deletion_requested_at IS NULL
+			SELECT ?, id, ? FROM users
+			WHERE id = ? AND deletion_requested_at IS NULL AND subscription_state = 'active'
 			RETURNING id`,
 		)
 		.bind(id, now, userId)
@@ -418,6 +423,13 @@ export async function createMachineRemote(binding: D1Database, userId: string, n
 			.first<{ deletion_requested_at: number | null }>();
 		if (deleting?.deletion_requested_at !== null && deleting?.deletion_requested_at !== undefined) {
 			throw new StorageError(409, "account_deleting");
+		}
+		const subscription = await binding
+			.prepare("SELECT subscription_state AS state FROM users WHERE id = ?")
+			.bind(userId)
+			.first<{ state: string }>();
+		if (subscription !== null && subscription.state !== "active") {
+			throw new StorageError(402, "subscription_required");
 		}
 		throw new StorageError(404, "account_not_found");
 	}
@@ -463,6 +475,7 @@ async function diagnoseReservation(
 				u.quota_bytes AS quotaBytes,
 				COALESCE(o.bytes, 0) AS replacedBytes,
 				u.reserved_bytes AS reservedBytes,
+				u.subscription_state AS subscriptionState,
 				(
 					SELECT COUNT(*) FROM upload_reservations r
 					WHERE r.user_id = u.id AND r.machine_remote_id = m.id AND r.sweep_id = ?
@@ -498,6 +511,9 @@ async function diagnoseReservation(
 	if (diagnosis.deletionRequestedAt !== null) {
 		throw new StorageError(409, "account_deleting");
 	}
+	if (diagnosis.subscriptionState !== "active") {
+		throw new StorageError(402, "subscription_required");
+	}
 	if (diagnosis.pendingObject > 0) {
 		throw new StorageError(409, "upload_in_progress");
 	}
@@ -525,6 +541,12 @@ async function diagnoseReservation(
 		diagnosis.usedBytes + diagnosis.reservedBytes - diagnosis.replacedBytes + input.expectedBytes >
 		diagnosis.quotaBytes
 	) {
+		await logAccountOperationalEventOnce(binding, {
+			accountId: userId,
+			event: "quota_exceeded",
+			now,
+			reason: "storage_bytes",
+		});
 		throw new StorageError(413, "quota_exceeded");
 	}
 	throw new StorageError(409, "reservation_conflict");
@@ -542,6 +564,9 @@ export async function reserveUpload(
 	if (existing !== null) {
 		if (existing.deletionRequestedAt !== null) {
 			throw new StorageError(409, "account_deleting");
+		}
+		if (existing.subscriptionState !== "active") {
+			throw new StorageError(402, "subscription_required");
 		}
 		if (!sameRequest(existing, input)) {
 			throw new StorageError(409, "idempotency_conflict");
@@ -565,7 +590,7 @@ export async function reserveUpload(
 				JOIN machine_remotes m ON m.user_id = u.id AND m.id = ?
 				LEFT JOIN object_ledger o ON o.user_id = u.id AND o.machine_remote_id = m.id
 					AND o.logical_object_key = ?
-				WHERE u.id = ? AND u.deletion_requested_at IS NULL
+				WHERE u.id = ? AND u.deletion_requested_at IS NULL AND u.subscription_state = 'active'
 					AND u.used_bytes + u.reserved_bytes - COALESCE(o.bytes, 0) + ? <= u.quota_bytes
 					AND (? = 1 OR NOT EXISTS (
 						SELECT 1 FROM upload_reservations closed
@@ -729,9 +754,13 @@ export async function createDownload(
 		FROM object_ledger o
 		JOIN users u ON u.id = o.user_id
 		WHERE o.user_id = ? AND u.deletion_requested_at IS NULL
+			AND (
+				u.subscription_state = 'active'
+				OR (u.subscription_state = 'grace' AND u.grace_ends_at > ?)
+			)
 			AND o.machine_remote_id = ? AND o.logical_object_key = ?`,
 	)
-		.bind(userId, machineRemoteId, logicalObjectKey)
+		.bind(userId, now, machineRemoteId, logicalObjectKey)
 		.first<{ storagePrefix: string }>();
 	if (object === null) {
 		throw new StorageError(404, "object_not_found");
@@ -741,6 +770,50 @@ export async function createDownload(
 		objectKey(object.storagePrefix, machineRemoteId, logicalObjectKey),
 		now,
 	);
+}
+
+export async function reconcileUsageAccounting(binding: D1Database, now: number): Promise<void> {
+	const accounts = await binding
+		.prepare(
+			`SELECT
+				u.id,
+				u.reserved_bytes AS reservedBytes,
+				u.used_bytes AS usedBytes,
+				COALESCE((
+					SELECT SUM(r.expected_bytes) FROM upload_reservations r
+					WHERE r.user_id = u.id AND r.state = 'pending'
+				), 0) AS expectedReservedBytes,
+				COALESCE((
+					SELECT SUM(o.bytes) FROM object_ledger o WHERE o.user_id = u.id
+				), 0) - COALESCE((
+					SELECT SUM(r.replaced_bytes) FROM upload_reservations r
+					WHERE r.user_id = u.id AND r.state = 'pending'
+				), 0) AS expectedUsedBytes
+			FROM users u`,
+		)
+		.all<{
+			expectedReservedBytes: number;
+			expectedUsedBytes: number;
+			id: string;
+			reservedBytes: number;
+			usedBytes: number;
+		}>();
+	for (const account of accounts.results) {
+		if (account.usedBytes === account.expectedUsedBytes && account.reservedBytes === account.expectedReservedBytes) {
+			continue;
+		}
+		await binding
+			.prepare("UPDATE users SET used_bytes = ?, reserved_bytes = ? WHERE id = ?")
+			.bind(account.expectedUsedBytes, account.expectedReservedBytes, account.id)
+			.run();
+		logOperationalEvent({
+			accountId: account.id,
+			event: "accounting_reconciled",
+			now,
+			reason: "accounting_drift",
+			severity: "error",
+		});
+	}
 }
 
 export async function deleteAccountData(

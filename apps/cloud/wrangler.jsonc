@@ -4,11 +4,47 @@
 	"main": "src/index.ts",
 	"compatibility_date": "2026-07-15",
 	"vars": {
-		"R2_BUCKET_NAME": "packbat"
+		"R2_BUCKET_NAME": "packbat",
+		"STORAGE_ALERT_BYTES": "1000000000000",
+		"STRIPE_ANNUAL_PRICE_ID": "price_replace_with_annual",
+		"STRIPE_CHECKOUT_CANCEL_URL": "https://packbat.dev/cloud/checkout/cancel",
+		"STRIPE_CHECKOUT_SUCCESS_URL": "https://packbat.dev/cloud/checkout/success",
+		"STRIPE_LIVEMODE": "true",
+		"STRIPE_MONTHLY_PRICE_ID": "price_replace_with_monthly",
+		"STRIPE_PORTAL_RETURN_URL": "https://packbat.dev"
+	},
+	"observability": {
+		"enabled": true,
+		"head_sampling_rate": 1,
+		"logs": {
+			"invocation_logs": false
+		}
 	},
 	"triggers": {
 		"crons": ["*/5 * * * *"]
 	},
+	"ratelimits": [
+		{
+			"name": "API_RATE_LIMITER",
+			"namespace_id": "3301",
+			"simple": { "limit": 600, "period": 60 }
+		},
+		{
+			"name": "BILLING_RATE_LIMITER",
+			"namespace_id": "3302",
+			"simple": { "limit": 10, "period": 60 }
+		},
+		{
+			"name": "DOWNLOAD_RATE_LIMITER",
+			"namespace_id": "3303",
+			"simple": { "limit": 120, "period": 60 }
+		},
+		{
+			"name": "WEBHOOK_RATE_LIMITER",
+			"namespace_id": "3304",
+			"simple": { "limit": 300, "period": 60 }
+		}
+	],
 	"d1_databases": [
 		{
 			"binding": "DB",
