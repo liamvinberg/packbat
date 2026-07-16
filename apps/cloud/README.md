@@ -61,11 +61,12 @@ conflicts fail closed rather than restoring upload access. See [Stripe's webhook
 and [subscription lifecycle](https://docs.stripe.com/billing/subscriptions/webhooks).
 
 Checkout admission is durable before the first Stripe request. One account can hold one 31-minute Checkout admission
-and one current provider subscription; the admission expires with the hosted Session and is released immediately if
-Stripe creation fails. A lapsed account in grace may start a replacement Checkout, while an active, trialing, or
-incomplete subscription blocks a second one. An exact retry with the same idempotency key and interval re-enters
-Stripe with the same provider idempotency key to recover a lost hosted URL; any other request conflicts until the
-admission expires. Stripe documents the request fields and the 30-minute minimum Session expiry in its
+and one current provider subscription. A caller that acquired the admission releases it only after a definitive
+Stripe 400 `invalid_request_error`; idempotency conflicts, network errors, 5xx responses, malformed success responses, and errors from an exact replay
+leave the shared admission intact. A lapsed account in grace may start a replacement Checkout, while an active,
+trialing, or incomplete subscription blocks a second one. An exact retry with the same idempotency key and interval
+re-enters Stripe with the same provider idempotency key to recover a lost hosted URL; any other request conflicts until
+the admission expires. Stripe documents the request fields and the 30-minute minimum Session expiry in its
 [Checkout Session API](https://docs.stripe.com/api/checkout/sessions/create).
 
 ## Abuse and cost controls
