@@ -8,28 +8,36 @@ excluded from this artifact.
 
 | Provider | Verdict | Why | Release boundary |
 | --- | --- | --- | --- |
-| Google Drive | **Go, conditional on the scheduled durability gate** | The live Desktop client requested only `drive.file`; an In-production grant completed publish, restore, and forced refresh through Packbat's managed rclone config. | Do not merge the public wizard lane until the same 2026-07-15 grant passes the scheduled July 23 refresh/restore probe and its follow-up revoke/reauthorize check. Publish verified branding before public onboarding. |
+| Google Drive | **Go for the wizard** | The live Desktop client requested only `drive.file`; an In-production grant completed publish, byte-identical restore, forced refresh, revocation classification, reauthorization, and retained-data restore through Packbat's managed rclone config. | Integrate the proven flow into the destination wizard and publish verified branding before public onboarding. |
 | Dropbox | **Go for the wizard; production approval remains** | Packbat's no-secret S256 PKCE client completed the full App Folder lifecycle, including rclone refresh, revocation, reauthorization, and retained-data restore. | Integrate the proven client into the destination wizard, then apply for production approval before the linked-user deadline. Never ship stock rclone's secret-based authorization flow. |
 
-Both provider backends work functionally, but neither public wizard lane is ready. Google waits on its real-time
-durability gate and branding. Dropbox's authorization gate is closed; its remaining release work is wizard integration
-and the normal production application.
+Both provider backends passed their lifecycle proofs, but neither public wizard lane is integrated yet. Google's
+remaining public-onboarding work is branding and wizard integration. Dropbox's remaining release work is wizard
+integration and the normal production application.
 
 ## Live validation status
 
 Live validation began on 2026-07-15 against Google Cloud project `test-project` and Dropbox app
-`packbat-oauth-spike-liam`. Credential material is stored outside the repository under `~/.packbat/oauth-spike/` in
-mode-`0600` files. The managed scratch rclone config is also mode `0600`; no token, client secret, or authorization URL
-is recorded in this document.
+`packbat-oauth-spike-liam`. Credential material stayed outside the repository under `~/.packbat/oauth-spike/` in
+mode-`0600` files during the proof and was removed afterward. The managed scratch rclone config was also mode `0600`
+and was removed after validation; no token, client secret, or authorization URL is recorded in this document.
 
 | Provider | Current verdict | Live evidence | Remaining gate |
 | --- | --- | --- | --- |
-| Google Drive | **Functional go; durability pending** | External app published **In production**; Desktop client; only `drive.file`; consent matched that scope; three synthetic archives plus one index round-tripped byte-for-byte; forced access-token expiry refreshed successfully. | The exact grant is scheduled to repeat refresh/restore on 2026-07-23 at 18:00 Europe/Stockholm. Revoke and reauthorize after that pass. Brand verification remains a public-onboarding gate. |
+| Google Drive | **Lifecycle proof passed** | External app published **In production**; Desktop client; only `drive.file`; consent matched that scope; synthetic archives and index round-tripped byte-for-byte; forced access-token expiry refreshed; Google Account revocation produced `invalid_grant` and exit `1`; reauthorization restored the retained bytes. | Integrate the proven flow in the wizard. Brand verification remains a public-onboarding gate. |
 | Dropbox | **No-secret PKCE flow passed** | App Folder app; documented minimum scopes; registered loopback redirect; S256 PKCE with offline access and no app secret; three synthetic archives plus one index round-tripped byte-for-byte; forced expiry refreshed through rclone; provider revocation produced `invalid_grant` and exit `1`; reauthorization restored the retained bytes. | Consume the proven client in the wizard, then complete the normal production application. |
 
-The 2026-07-15 live scripts ran as `packbat-drive-spike` and `packbat-dropbox-spike`. Google intentionally skipped
-revocation so the same grant can establish the seven-day result. The 2026-07-16 Dropbox run used Packbat's shipped
-authorization seam and a `packbat-dropbox-pkce-proof` rclone remote; its redacted evidence is recorded below.
+The 2026-07-15 live scripts ran as `packbat-drive-spike` and `packbat-dropbox-spike`. The 2026-07-16 Google follow-up
+reused the Drive remote, revoked it through Google Account, reauthorized it, and restored the retained bytes. The
+2026-07-16 Dropbox run used Packbat's shipped authorization seam and a `packbat-dropbox-pkce-proof` rclone remote; its
+redacted evidence is recorded below.
+
+The planned seven-day Google wait was removed from the release gate. Google's contract applies that expiry only to
+External apps in **Testing**; the tested app was already **In production**. A second live refresh after seven days would
+repeat the provider contract without exercising a distinct Packbat behavior, while delaying revocation and recovery
+evidence that can be collected immediately
+([Google: app audience](https://support.google.com/cloud/answer/15549945#publishing-status),
+[Google: refresh-token expiration](https://developers.google.com/identity/protocols/oauth2#expiration)).
 
 ## Google Drive registration runbook
 
@@ -360,12 +368,16 @@ Revoking an access or refresh token removes all OAuth scopes granted to the Clou
 clients in that project; propagation can take time
 ([Google: token revocation](https://developers.google.com/identity/protocols/oauth2/native-app#tokenrevoke)).
 
-Observed refresh behavior and the remaining #36 revocation expectation:
+Observed Google lifecycle behavior:
 
 - An expired access token with a valid refresh token is refreshed transparently, `rclone copy` succeeds, and rclone
   updates the token/expiry in the managed config.
-- A revoked or expired refresh grant makes `rclone copy` fail while fetching a token. The provider class should be
-  `invalid_grant`; #36 captures the exact rclone stderr prefix and exit code after the durability probe.
+- Revoking the grant through Google Account and then forcing the cached access-token expiry made rclone fail while
+  creating the Drive filesystem. The stable inner class was `couldn't fetch token: invalid_grant: maybe token expired?`
+  and rclone exited `1`.
+- `rclone config reconnect` created a new `drive.file` grant against the same remote. Downloading the pre-revocation
+  remote root restored all three synthetic archives and the encrypted index byte-for-byte, proving revocation and
+  reauthorization do not delete or relocate retained Drive data.
 - `invalid_client` is a different doctor diagnosis: the shipped client credential is invalid, disabled, or deleted,
   not a user grant that merely needs refreshing.
 
@@ -377,8 +389,8 @@ fetches up to five times, but treats OAuth HTTP 400/401 responses as fatal. A pr
 fatal `token expired and there's no refresh token` error
 ([rclone: OAuth error wrapping](https://github.com/rclone/rclone/blob/v1.74.4/lib/oauthutil/oauthutil.go#L275-L297),
 [rclone: token refresh path](https://github.com/rclone/rclone/blob/v1.74.4/lib/oauthutil/oauthutil.go#L307-L372)).
-Packbat currently wraps the entire stderr as `rclone copy failed: ...`; #36 must still capture the provider and
-top-level rclone prefixes around this stable inner class.
+Packbat currently wraps the entire stderr as `rclone copy failed: ...`; the live proof confirms that the inner
+`invalid_grant` class is available for the doctor classifier.
 
 ### Dropbox
 
@@ -412,8 +424,9 @@ the observed `invalid_grant` classifier instead of depending on cached-token tim
 The 2026-07-15 and 2026-07-16 live runs resolved the immediate behavior:
 
 - Google Drive: forcing the cached access-token expiry caused rclone to refresh the token, rewrite its future expiry in
-  the managed config, and complete `copyto`. The grant remains active for the beyond-seven-days check, so its revoked
-  error is not yet known.
+  the managed config, and complete `copyto`. Revoking the grant through Google Account, forcing expiry again, and
+  retrying a copy produced `invalid_grant` and exit `1`. Reauthorization of the same remote restored the retained
+  archives and encrypted index byte-for-byte.
 - Dropbox: both the rejected secret-based spike and the shipped no-secret PKCE path refreshed successfully after a
   forced expiry. Revoking each authorization while retaining its App Folder, then forcing another expiry, made rclone
   exit `1` with `invalid_grant`. A fresh Packbat PKCE authorization restored the original three archives and encrypted
@@ -507,10 +520,14 @@ Two isolated cadence probes established the request shape. An unchanged three-fi
 one Get. A five-file changed copy used 23: eleven Create, eleven List, and one Get. The single Get in each probe was an
 error in Cloud metrics even though both rclone commands exited `0`; neither produced a quota or rate-limit error.
 
-These request traces are not quota-unit totals: the current model weights methods differently and the console does not
-expose a per-run unit delta. Packbat's current `:03` timer alignment therefore remains the real risk. Add hour-wide
-jitter before a shared client approaches synchronized scale; #36 owns the final unit measurement against the durable
-grant rather than extrapolating a capacity promise from request counts.
+Applying Google's current method weights to those isolated traces gives the production-sweep cost. The unchanged sweep
+used `4 × 100` List units plus `1 × 5` Get units, for **405 quota units**. The five-file changed sweep used
+`11 × 50` Create/edit units, `11 × 100` List units, and `1 × 5` Get units, for **1,655 quota units**. The Cloud Console
+does not expose a per-run weighted-unit delta, so the method trace is the auditable measurement. Its legacy 12,000-query
+rows remain request-count observability and must not be mixed with the weighted totals.
+
+Packbat's current `:03` timer alignment remains the real risk. Add hour-wide jitter before a shared client approaches
+synchronized scale rather than extrapolating a capacity promise from hourly averages.
 
 Quota excess is HTTP 403 `User rate limit exceeded`; backend checks can also return HTTP 429. Google requires truncated
 exponential backoff, and quota adjustments can be requested in Cloud Console, although approval is not guaranteed
@@ -541,9 +558,9 @@ deadline, despite the nominal 500-user development maximum. That is an approval 
 
 ## Production-readiness follow-ups
 
-1. [#36](https://github.com/liamvinberg/packbat/issues/36) owns the calendar-bound Google proof: reuse this exact grant
-   after seven days, record weighted-unit deltas for unchanged and changed sweeps, then revoke, classify, reauthorize,
-   and prove retained data.
+1. [#36](https://github.com/liamvinberg/packbat/issues/36) resolved the Google lifecycle proof: the In-production
+   contract removes Testing's seven-day expiry, the live grant classified revocation, reauthorized, restored retained
+   data, and established weighted-unit costs for unchanged and changed sweeps.
 2. [#37](https://github.com/liamvinberg/packbat/issues/37) resolved the Dropbox production authorization decision:
    Dropbox requires S256 PKCE without an app secret for Packbat's public client.
 3. [#38](https://github.com/liamvinberg/packbat/issues/38) owns the implementation and live proof: build the
@@ -562,11 +579,11 @@ Issue #16 established the provider decision and handed the remaining release gat
 5. [x] Force access-token refresh for each provider and prove the transfer succeeds and the expiry changes.
 6. [x] Revoke Dropbox and record exact stderr, exit code, and provider class: `invalid_grant`, exit `1`.
 7. [x] Reauthorize Dropbox, repeat restore, and prove no remote data was lost or moved.
-8. [x] Capture the live Google method traces, including five calls for an unchanged sweep and 23 for a five-file
-   changed sweep, and reconcile the apparent quota model mismatch against the current API contract. Exact weighted-unit
-   deltas remain the release task in #36.
-9. [ ] #36: confirm the In-production Google refresh token remains usable beyond seven days, then revoke and
-   reauthorize. Complete brand verification before public onboarding.
+8. [x] Capture the live Google method traces, including five calls and 405 units for an unchanged sweep and 23 calls
+   and 1,655 units for a five-file changed sweep, then reconcile the apparent Console quota-model mismatch against the
+   current API contract.
+9. [x] #36: verify the In-production token contract, revoke and classify the live grant, reauthorize, restore retained
+   bytes, and calculate weighted-unit costs. Complete brand verification before public onboarding.
 10. [x] #37: obtain Dropbox's written ruling. Public clients must use PKCE without an app secret.
 11. [ ] #38: ship and live-validate Dropbox S256 PKCE without an app secret.
 12. [ ] #17: integrate the proven flow and apply before linked user 50 starts the two-week deadline.
