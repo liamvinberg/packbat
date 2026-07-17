@@ -8,6 +8,7 @@
 	"files": {
 		"includes": [
 			"**",
+			"!.release-please-manifest.json",
 			"!apps/cloud/drizzle/meta",
 			"!apps/cloud/worker-configuration.d.ts",
 			"!apps/web/public/packbat-mark.svg",
