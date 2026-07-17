@@ -78,6 +78,53 @@ async function runRclone(
 	});
 }
 
+interface RcloneListItem {
+	path: string;
+	isDirectory: boolean;
+}
+
+function parseRcloneList(output: string): RcloneListItem[] {
+	let value: unknown;
+	try {
+		value = JSON.parse(output);
+	} catch {
+		throw new PackbatError("rclone lsjson returned invalid JSON");
+	}
+	if (!Array.isArray(value)) {
+		throw new PackbatError("rclone lsjson returned invalid JSON");
+	}
+	return value.map((item) => {
+		if (
+			typeof item !== "object" ||
+			item === null ||
+			typeof (item as Record<string, unknown>).Path !== "string" ||
+			typeof (item as Record<string, unknown>).IsDir !== "boolean"
+		) {
+			throw new PackbatError("rclone lsjson returned invalid JSON");
+		}
+		return {
+			path: (item as Record<string, unknown>).Path as string,
+			isDirectory: (item as Record<string, unknown>).IsDir as boolean,
+		};
+	});
+}
+
+export async function listRemoteDirectories(destination: string, mode: RcloneConfigMode): Promise<string[]> {
+	const items = parseRcloneList(await runRclone("lsjson", [destination, "--dirs-only", "--max-depth", "1"], mode));
+	return items
+		.filter((item) => item.isDirectory)
+		.map((item) => item.path)
+		.sort((left, right) => left.localeCompare(right));
+}
+
+export async function listRemoteFiles(destination: string, mode: RcloneConfigMode): Promise<string[]> {
+	const items = parseRcloneList(await runRclone("lsjson", [destination, "--files-only", "--recursive"], mode));
+	return items
+		.filter((item) => !item.isDirectory)
+		.map((item) => item.path)
+		.sort((left, right) => left.localeCompare(right));
+}
+
 export function classifyRcloneOAuthFailure(output: string): RcloneOAuthFailure | null {
 	const normalized = output.toLowerCase();
 	for (const errorClass of ["invalid_grant", "expired_access_token", "invalid_access_token"] as const) {
@@ -116,13 +163,7 @@ export async function remoteFileExists(destinationFile: string, mode: RcloneConf
 	} catch {
 		return false;
 	}
-	let items: unknown;
-	try {
-		items = JSON.parse(output);
-	} catch {
-		throw new PackbatError("rclone lsjson returned invalid JSON");
-	}
-	return Array.isArray(items) && items.length > 0;
+	return parseRcloneList(output).length > 0;
 }
 
 export async function copyTree(source: string, destination: string, mode: RcloneConfigMode): Promise<void> {

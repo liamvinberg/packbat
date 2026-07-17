@@ -6,7 +6,7 @@ import { join, relative } from "node:path";
 import { afterEach, describe, expect, test } from "vitest";
 import { decryptWithIdentity, encryptToRecipient, generateIdentity, identityToRecipient } from "../src/offbox/age.js";
 import { renderRecoveryKit } from "../src/offbox/recovery-kit.js";
-import { appendJsonLine, makeClaudeStore } from "./helpers/fixtures.js";
+import { appendJsonLine, makeClaudeStore, makeOpenCodeStore } from "./helpers/fixtures.js";
 import { makeTempHome, runCli } from "./helpers/run-cli.js";
 
 const SOURCE_MTIME_MS = Date.UTC(2026, 0, 2, 3, 4, 5);
@@ -22,6 +22,7 @@ interface Layout {
 	packbatHome: string;
 	archiveRoot: string;
 	claudeRoot: string;
+	opencodeDb: string;
 	remote: string;
 	env: Record<string, string>;
 }
@@ -36,12 +37,14 @@ async function makeLayout(): Promise<Layout> {
 		packbatHome,
 		archiveRoot: join(home, "archive"),
 		claudeRoot: join(claudeConfigDir, "projects"),
+		opencodeDb: join(home, "stores", "opencode", "opencode.db"),
 		remote: join(home, "remote"),
 		env: {
 			PACKBAT_HOME: packbatHome,
 			CLAUDE_CONFIG_DIR: claudeConfigDir,
 			CODEX_HOME: join(home, "stores", "codex"),
 			PI_CODING_AGENT_SESSION_DIR: join(home, "stores", "pi"),
+			OPENCODE_DB: join(home, "stores", "opencode", "opencode.db"),
 		},
 	};
 }
@@ -71,13 +74,18 @@ function remoteStateDirectory(packbatHome: string, destination: string): string 
 	return join(packbatHome, "state", "offbox", id);
 }
 
-async function writeConfiguredConfig(layout: Layout, recipient: string, destinations: string[]): Promise<void> {
+async function writeConfiguredConfig(
+	layout: Layout,
+	recipient: string,
+	destinations: string[],
+	machine = "test-machine",
+): Promise<void> {
 	await mkdir(layout.packbatHome, { recursive: true });
 	await writeFile(
 		join(layout.packbatHome, "config.json"),
 		`${JSON.stringify({
 			version: 2,
-			machine: "test-machine",
+			machine,
 			archiveRoot: layout.archiveRoot,
 			sweep: { intervalMinutes: 60 },
 			offbox: {
@@ -266,6 +274,202 @@ describe.skipIf(!hasAgeBinary)("age CLI interoperability", () => {
 });
 
 describe.skipIf(!hasRclone)("off-box archive cycle", () => {
+	test("mirrors every foreign machine archive and makes it searchable", async () => {
+		const first = await makeLayout();
+		const second = await makeLayout();
+		const identity = await generateIdentity();
+		const recipient = await identityToRecipient(identity);
+		await makeClaudeStore(first.claudeRoot, { main: { mtimeMs: SOURCE_MTIME_MS }, sidecars: [] });
+		const openCode = await makeOpenCodeStore(first.opencodeDb, { version: "1.17.5" });
+		try {
+			await writeConfiguredConfig(first, recipient, [first.remote], "machine-a");
+			const published = await runCli(["sync"], { home: first.home, env: first.env });
+			expect(published.code, published.stderr).toBe(0);
+
+			await writeConfiguredConfig(second, recipient, [first.remote], "machine-b");
+			await writeFile(join(second.packbatHome, "identity.txt"), `${identity}\n`);
+			const beforeMirror = await runCli(["doctor", "--json"], { home: second.home, env: second.env });
+			expect(
+				(JSON.parse(beforeMirror.stdout) as { facts: Array<{ id: string; detail: string }> }).facts.find(
+					(fact) => fact.id === "mirror",
+				)?.detail,
+			).toBe(`${first.remote} · not yet run`);
+			const mirrored = await runCli(["sync"], { home: second.home, env: second.env });
+
+			expect(mirrored.code, mirrored.stderr).toBe(0);
+			expect(mirrored.stdout).toMatch(/, mirrored [1-9]\d*/);
+			const firstMachineRoot = join(first.archiveRoot, "machine-a");
+			const secondMachineRoot = join(second.archiveRoot, "machine-a");
+			const expectedFiles = await listFiles(firstMachineRoot);
+			expect(expectedFiles).toContain("index.jsonl");
+			expect(expectedFiles).toContainEqual(expect.stringMatching(/opencode\/snapshots\/.*\/manifest\.json/));
+			expect(await listFiles(secondMachineRoot)).toEqual(expectedFiles);
+			for (const path of expectedFiles) {
+				expect(await readFile(join(secondMachineRoot, path))).toEqual(await readFile(join(firstMachineRoot, path)));
+			}
+			const records = (await readFile(join(firstMachineRoot, "index.jsonl"), "utf8"))
+				.trim()
+				.split("\n")
+				.map((line) => JSON.parse(line) as { path: string });
+			for (const record of records) {
+				expect((await stat(join(secondMachineRoot, record.path))).mtimeMs).toBe(
+					(await stat(join(firstMachineRoot, record.path))).mtimeMs,
+				);
+			}
+
+			const searched = await runCli(["search", "fixture"], { home: second.home, env: second.env });
+			expect(searched.code, searched.stderr).toBe(0);
+			expect(searched.stdout).toContain("Synthetic fixture prompt.");
+
+			const doctor = await runCli(["doctor", "--json"], { home: second.home, env: second.env });
+			const mirrorFact = (JSON.parse(doctor.stdout) as { facts: Array<{ id: string; detail: string }> }).facts.find(
+				(fact) => fact.id === "mirror",
+			);
+			expect(mirrorFact?.detail).toContain(`${first.remote} · 1 machine seen · last pulled `);
+		} finally {
+			openCode.database.close();
+		}
+	});
+
+	test("does not pull foreign archive files twice", async () => {
+		const first = await makeLayout();
+		const second = await makeLayout();
+		const identity = await generateIdentity();
+		const recipient = await identityToRecipient(identity);
+		await makeClaudeStore(first.claudeRoot, { main: { mtimeMs: SOURCE_MTIME_MS }, sidecars: [] });
+		await writeConfiguredConfig(first, recipient, [first.remote], "machine-a");
+		expect((await runCli(["sync"], { home: first.home, env: first.env })).code).toBe(0);
+		await writeConfiguredConfig(second, recipient, [first.remote], "machine-b");
+		await writeFile(join(second.packbatHome, "identity.txt"), `${identity}\n`);
+		expect((await runCli(["sync"], { home: second.home, env: second.env })).code).toBe(0);
+
+		const repeated = await runCli(["sync"], { home: second.home, env: second.env });
+
+		expect(repeated.code, repeated.stderr).toBe(0);
+		expect(repeated.stdout).not.toContain("mirrored");
+		expect(
+			JSON.parse(await readFile(join(remoteStateDirectory(second.packbatHome, first.remote), "mirror.json"), "utf8")),
+		).toMatchObject({ v: 1, machines: 1, pulled: 0, lastPulledAt: expect.any(String) });
+	});
+
+	test("refreshes a foreign machine index when its archive grows", async () => {
+		const first = await makeLayout();
+		const second = await makeLayout();
+		const identity = await generateIdentity();
+		const recipient = await identityToRecipient(identity);
+		await makeClaudeStore(first.claudeRoot, { main: { mtimeMs: SOURCE_MTIME_MS }, sidecars: [] });
+		await writeConfiguredConfig(first, recipient, [first.remote], "machine-a");
+		expect((await runCli(["sync"], { home: first.home, env: first.env })).code).toBe(0);
+		await writeConfiguredConfig(second, recipient, [first.remote], "machine-b");
+		await writeFile(join(second.packbatHome, "identity.txt"), `${identity}\n`);
+		expect((await runCli(["sync"], { home: second.home, env: second.env })).code).toBe(0);
+
+		const grown = await makeClaudeStore(first.claudeRoot, {
+			id: "55555555-5555-4555-8555-555555555555",
+			main: { mtimeMs: SOURCE_MTIME_MS + 60_000 },
+			sidecars: [],
+		});
+		await appendJsonLine(
+			grown.files[0]!,
+			{
+				type: "user",
+				uuid: "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+				parentUuid: null,
+				sessionId: grown.id,
+				timestamp: "2026-01-02T03:05:05.000Z",
+				cwd: "/synthetic/project",
+				message: { role: "user", content: "Foreign growth sentinel." },
+			},
+			SOURCE_MTIME_MS + 60_000,
+		);
+		expect((await runCli(["sync"], { home: first.home, env: first.env })).code).toBe(0);
+
+		const mirrored = await runCli(["sync"], { home: second.home, env: second.env });
+
+		expect(mirrored.code, mirrored.stderr).toBe(0);
+		const firstIndex = (await readFile(join(first.archiveRoot, "machine-a", "index.jsonl"), "utf8"))
+			.trim()
+			.split("\n")
+			.map((line) => JSON.parse(line) as { path: string; unit: string });
+		const grownRecord = firstIndex.find((record) => record.unit === grown.id)!;
+		expect(await readFile(join(second.archiveRoot, "machine-a", grownRecord.path))).toEqual(
+			await readFile(join(first.archiveRoot, "machine-a", grownRecord.path)),
+		);
+		expect(await readFile(join(second.archiveRoot, "machine-a", "index.jsonl"), "utf8")).toContain(
+			`"path":"${grownRecord.path}"`,
+		);
+		const searched = await runCli(["search", "growth sentinel"], { home: second.home, env: second.env });
+		expect(searched.code, searched.stderr).toBe(0);
+		expect(searched.stdout).toContain("Foreign growth sentinel.");
+	});
+
+	test("keeps mirroring after a foreign object fails its hash check", async () => {
+		const first = await makeLayout();
+		const second = await makeLayout();
+		const identity = await generateIdentity();
+		const recipient = await identityToRecipient(identity);
+		await makeClaudeStore(first.claudeRoot, {
+			main: { mtimeMs: SOURCE_MTIME_MS },
+			sidecars: [{ relPath: join("subagents", "agent-a1b2c3d4.jsonl"), mtimeMs: SOURCE_MTIME_MS }],
+		});
+		await writeConfiguredConfig(first, recipient, [first.remote], "machine-a");
+		expect((await runCli(["sync"], { home: first.home, env: first.env })).code).toBe(0);
+		const index = await decryptWithIdentity(
+			identity,
+			await readFile(join(first.remote, "machine-a", "index.jsonl.age")),
+		);
+		const records = index
+			.toString("utf8")
+			.trim()
+			.split("\n")
+			.map((line) => JSON.parse(line) as { path: string });
+		const corrupted = records[0]!;
+		const preserved = records[1]!;
+		await writeFile(
+			join(first.remote, "machine-a", `${corrupted.path}.age`),
+			await encryptToRecipient(recipient, Buffer.from("synthetic corruption\n")),
+		);
+		await writeConfiguredConfig(second, recipient, [first.remote], "machine-b");
+		await writeFile(join(second.packbatHome, "identity.txt"), `${identity}\n`);
+
+		const mirrored = await runCli(["sync"], { home: second.home, env: second.env });
+
+		expect(mirrored.code).toBe(1);
+		expect(mirrored.stderr).toContain(`off-box ${first.remote}: mirror:`);
+		expect(mirrored.stderr).toContain(`sha256 mismatch for machine-a/${corrupted.path}`);
+		expect(await readFile(join(second.archiveRoot, "machine-a", preserved.path))).toEqual(
+			await readFile(join(first.archiveRoot, "machine-a", preserved.path)),
+		);
+		await expect(stat(join(second.archiveRoot, "machine-a", corrupted.path))).rejects.toMatchObject({ code: "ENOENT" });
+		await expect(stat(join(second.archiveRoot, "machine-a", "index.jsonl"))).rejects.toMatchObject({ code: "ENOENT" });
+		expect(
+			JSON.parse(await readFile(join(remoteStateDirectory(second.packbatHome, first.remote), "mirror.json"), "utf8")),
+		).toMatchObject({ machines: 1, pulled: 1 });
+	});
+
+	test("skips mirroring without a resident identity", async () => {
+		const first = await makeLayout();
+		const second = await makeLayout();
+		const identity = await generateIdentity();
+		const recipient = await identityToRecipient(identity);
+		await makeClaudeStore(first.claudeRoot, { main: { mtimeMs: SOURCE_MTIME_MS }, sidecars: [] });
+		await writeConfiguredConfig(first, recipient, [first.remote], "machine-a");
+		expect((await runCli(["sync"], { home: first.home, env: first.env })).code).toBe(0);
+		await writeConfiguredConfig(second, recipient, [first.remote], "machine-b");
+
+		const synced = await runCli(["sync"], { home: second.home, env: second.env });
+
+		expect(synced.code, synced.stderr).toBe(0);
+		expect(synced.stdout).not.toContain("mirrored");
+		await expect(stat(join(second.archiveRoot, "machine-a"))).rejects.toMatchObject({ code: "ENOENT" });
+		expect(
+			await matchingLineCount(
+				join(second.packbatHome, "logs", "packbat.log"),
+				"mirror skipped: resident identity is missing",
+			),
+		).toBe(1);
+	});
+
 	test("publishes to two remotes and restores byte-identical sessions from either", async () => {
 		const layout = await makeLayout();
 		const secondRemote = join(layout.home, "second-remote");

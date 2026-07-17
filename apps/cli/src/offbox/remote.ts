@@ -6,20 +6,31 @@ import { type RemoteConfig, remoteDestination, remoteStatePath } from "../core/c
 import { isEnoent } from "../core/fs.js";
 import type { PackbatHome } from "../core/home.js";
 import { writeAtomicJson } from "../core/stamps.js";
-import { copyFile, copyTree, joinRcloneDestination, remoteFileExists } from "./rclone.js";
+import {
+	copyFile,
+	copyTree,
+	joinRcloneDestination,
+	listRemoteDirectories,
+	listRemoteFiles,
+	remoteFileExists,
+} from "./rclone.js";
 
 export interface ArchiveRemote {
 	readonly config: RemoteConfig;
 	readonly destination: string;
+	readonly supportsMirror: boolean;
 	indexExists(machine: string): Promise<boolean>;
 	putArchiveObjects(machine: string, sourceRoot: string): Promise<void>;
 	putIndex(machine: string, sourcePath: string): Promise<void>;
 	getIndex(machine: string, destinationPath: string): Promise<void>;
 	getArchiveObject(machine: string, archivePath: string, destinationPath: string): Promise<void>;
+	listMachines(): Promise<string[] | null>;
+	listMachineObjects(machine: string): Promise<string[] | null>;
 }
 
 class RcloneArchiveRemote implements ArchiveRemote {
 	readonly destination: string;
+	readonly supportsMirror = true;
 
 	constructor(readonly config: Extract<RemoteConfig, { type: "rclone" }>) {
 		this.destination = config.destination;
@@ -58,6 +69,16 @@ class RcloneArchiveRemote implements ArchiveRemote {
 			destinationPath,
 			this.config.rcloneConfig,
 		);
+	}
+
+	async listMachines(): Promise<string[]> {
+		return await listRemoteDirectories(this.config.destination, this.config.rcloneConfig);
+	}
+
+	async listMachineObjects(machine: string): Promise<string[]> {
+		return (await listRemoteFiles(joinRcloneDestination(this.config.destination, machine), this.config.rcloneConfig))
+			.filter((path) => path !== "index.jsonl.age" && path.endsWith(".age"))
+			.map((path) => path.slice(0, -".age".length));
 	}
 }
 
@@ -105,6 +126,7 @@ async function archiveCiphertexts(sourceRoot: string, machine: string): Promise<
 
 class CloudArchiveRemote implements ArchiveRemote {
 	readonly destination: string;
+	readonly supportsMirror = false;
 	private sweepId = randomUUID();
 	private expectedArchiveCount = 0;
 	private readonly statePath: string;
@@ -160,6 +182,14 @@ class CloudArchiveRemote implements ArchiveRemote {
 			.split(sep)
 			.join("/");
 		await downloadCloudObject(this.home, this.config.machineRemoteId, logicalKey, destinationPath);
+	}
+
+	async listMachines(): Promise<null> {
+		return null;
+	}
+
+	async listMachineObjects(_machine: string): Promise<null> {
+		return null;
 	}
 }
 

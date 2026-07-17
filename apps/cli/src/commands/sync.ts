@@ -6,6 +6,7 @@ import { type PackbatHome, resolveHome } from "../core/home.js";
 import { withRetrievalLock, withSyncLock } from "../core/lock.js";
 import { appendLog } from "../core/log.js";
 import { writeRunStamps } from "../core/stamps.js";
+import { mirrorOffbox, type RemoteMirrorOutcome } from "../offbox/mirror.js";
 import { publishOffbox, type RemotePublishOutcome, remindOffboxSkipped } from "../offbox/outbox.js";
 import { assertFts5, closeDatabase, openAndRefresh } from "../retrieval/database.js";
 
@@ -72,7 +73,10 @@ export async function runSync(argv: string[], output: SyncOutputOptions = {}): P
 		let repaired = 0;
 		let errors: string[] = [];
 		let offboxOutcomes: RemotePublishOutcome[] = [];
+		let mirrorOutcomes: RemoteMirrorOutcome[] = [];
+		let mirrored = 0;
 		let offboxError: string | undefined;
+		let mirrorError: string | undefined;
 		try {
 			const result = await sweep(config, process.env);
 			archived = result.archived;
@@ -89,6 +93,13 @@ export async function runSync(argv: string[], output: SyncOutputOptions = {}): P
 			try {
 				if (config.offbox.mode === "configured") {
 					offboxOutcomes = await publishOffbox(home, config, config.offbox);
+					try {
+						const mirror = await mirrorOffbox(home, config, config.offbox);
+						mirrorOutcomes = mirror.outcomes;
+						mirrored = mirror.pulled;
+					} catch (error) {
+						mirrorError = error instanceof Error ? error.message : String(error);
+					}
 				} else {
 					await remindOffboxSkipped(home);
 				}
@@ -100,8 +111,17 @@ export async function runSync(argv: string[], output: SyncOutputOptions = {}): P
 		const offboxFailures = offboxOutcomes.filter(
 			(outcome): outcome is RemotePublishOutcome & { error: string } => !outcome.ok && outcome.error !== undefined,
 		);
+		const mirrorFailures = mirrorOutcomes.filter(
+			(outcome): outcome is RemoteMirrorOutcome & { error: string } => !outcome.ok && outcome.error !== undefined,
+		);
 		const finishedAt = new Date().toISOString();
-		const summary = `archived ${archived}, unchanged ${unchanged}, failed ${failed}${repaired > 0 ? `, repaired ${repaired}` : ""}${offboxOutcomes.length > 0 ? `, ${offboxSummary(offboxOutcomes)}` : ""}`; // DRAFT copy
+		const summary = `archived ${archived}, unchanged ${unchanged}, failed ${failed}${repaired > 0 ? `, repaired ${repaired}` : ""}${offboxOutcomes.length > 0 ? `, ${offboxSummary(offboxOutcomes)}` : ""}${mirrored > 0 ? `, mirrored ${mirrored}` : ""}`; // DRAFT copy
+		const offboxFailureDetails = [
+			...offboxFailures.map((outcome) => `${outcome.destination}: ${outcome.error}`),
+			...mirrorFailures.map((outcome) => `${outcome.destination}: ${outcome.error}`),
+			...(offboxError === undefined ? [] : [offboxError]),
+			...(mirrorError === undefined ? [] : [`mirror: ${mirrorError}`]),
+		];
 		await writeRunStamps(home.statePath, {
 			startedAt,
 			finishedAt,
@@ -110,17 +130,19 @@ export async function runSync(argv: string[], output: SyncOutputOptions = {}): P
 			unchanged,
 			failed,
 			repaired,
-			...(offboxFailures.length > 0
-				? { offbox: offboxFailures.map((outcome) => `${outcome.destination}: ${outcome.error}`).join("; ") }
-				: offboxError === undefined
-					? {}
-					: { offbox: offboxError }),
+			...(offboxFailureDetails.length === 0 ? {} : { offbox: offboxFailureDetails.join("; ") }),
 		});
 		await appendLog(home.logsPath, summary, new Date(finishedAt));
 		if (offboxError !== undefined) {
 			await appendLog(home.logsPath, `off-box failed: ${offboxError}`, new Date(finishedAt));
 		}
 		for (const outcome of offboxFailures) {
+			await appendLog(home.logsPath, `off-box failed (${outcome.destination}): ${outcome.error}`, new Date(finishedAt)); // DRAFT copy
+		}
+		if (mirrorError !== undefined) {
+			await appendLog(home.logsPath, `off-box failed: mirror: ${mirrorError}`, new Date(finishedAt)); // DRAFT copy
+		}
+		for (const outcome of mirrorFailures) {
 			await appendLog(home.logsPath, `off-box failed (${outcome.destination}): ${outcome.error}`, new Date(finishedAt)); // DRAFT copy
 		}
 		for (const error of errors) {
@@ -132,9 +154,21 @@ export async function runSync(argv: string[], output: SyncOutputOptions = {}): P
 		for (const outcome of offboxFailures) {
 			process.stderr.write(`packbat sync: off-box ${outcome.destination}: ${outcome.error}\n`); // DRAFT copy
 		}
+		if (mirrorError !== undefined) {
+			process.stderr.write(`packbat sync: off-box: mirror: ${mirrorError}\n`); // DRAFT copy
+		}
+		for (const outcome of mirrorFailures) {
+			process.stderr.write(`packbat sync: off-box ${outcome.destination}: ${outcome.error}\n`); // DRAFT copy
+		}
 		reportSummary(summary, output);
 		reportCloudUpdate();
-		return ok && offboxFailures.length === 0 && offboxError === undefined ? 0 : 1;
+		return ok &&
+			offboxFailures.length === 0 &&
+			mirrorFailures.length === 0 &&
+			offboxError === undefined &&
+			mirrorError === undefined
+			? 0
+			: 1;
 	});
 	if (!locked.acquired) {
 		output.onBusy?.();

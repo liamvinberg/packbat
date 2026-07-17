@@ -1,6 +1,9 @@
+import { readFile } from "node:fs/promises";
+import { join } from "node:path";
 import pc from "picocolors";
-import { loadConfig } from "../core/config.js";
-import { resolveHome } from "../core/home.js";
+import { loadConfig, type PackbatConfig, remoteDestination, remoteStatePath } from "../core/config.js";
+import { isEnoent } from "../core/fs.js";
+import { type PackbatHome, resolveHome } from "../core/home.js";
 import { packbatVersion } from "../core/version.js";
 import {
 	checkFresh,
@@ -14,6 +17,7 @@ import {
 } from "../doctor/facts.js";
 import { fetchLatestVersion, versionFact } from "../doctor/latest-version.js";
 import { checkReconciled } from "../doctor/reconcile.js";
+import { createArchiveRemote } from "../offbox/remote.js";
 
 const USAGE = "Usage: packbat doctor [--json]\n";
 
@@ -52,6 +56,64 @@ function printHuman(facts: Fact[]): void {
 	}
 }
 
+interface MirrorStamp {
+	v: 1;
+	lastPulledAt: string;
+	machines: number;
+	pulled: number;
+}
+
+function isMirrorStamp(value: unknown): value is MirrorStamp {
+	return (
+		typeof value === "object" &&
+		value !== null &&
+		(value as Record<string, unknown>).v === 1 &&
+		typeof (value as Record<string, unknown>).lastPulledAt === "string" &&
+		!Number.isNaN(Date.parse((value as Record<string, unknown>).lastPulledAt as string)) &&
+		Number.isInteger((value as Record<string, unknown>).machines) &&
+		((value as Record<string, unknown>).machines as number) >= 0 &&
+		Number.isInteger((value as Record<string, unknown>).pulled) &&
+		((value as Record<string, unknown>).pulled as number) >= 0
+	);
+}
+
+async function mirrorFacts(home: PackbatHome, config: PackbatConfig): Promise<Fact[]> {
+	if (config.offbox.mode !== "configured") {
+		return [];
+	}
+	const facts: Fact[] = [];
+	for (const remoteConfig of config.offbox.remotes) {
+		const remote = createArchiveRemote(home, remoteConfig);
+		if (!remote.supportsMirror) {
+			continue;
+		}
+		const destination = remoteDestination(remoteConfig);
+		let stamp: MirrorStamp | null = null;
+		try {
+			const value: unknown = JSON.parse(
+				await readFile(join(remoteStatePath(home, remoteConfig), "mirror.json"), "utf8"),
+			);
+			stamp = isMirrorStamp(value) ? value : null;
+		} catch (error) {
+			if (!isEnoent(error) && !(error instanceof SyntaxError)) {
+				throw error;
+			}
+		}
+		facts.push(
+			stamp === null
+				? { id: "mirror", title: "mirror", status: "info", detail: `${destination} · not yet run` }
+				: {
+						id: "mirror",
+						title: "mirror",
+						status: "info",
+						detail: `${destination} · ${stamp.machines} ${stamp.machines === 1 ? "machine" : "machines"} seen · last pulled ${stamp.lastPulledAt}`,
+						data: { destination, ...stamp },
+					},
+		);
+	}
+	return facts;
+}
+
 export async function runDoctor(argv: string[]): Promise<number> {
 	const options = parseOptions(argv);
 	if (options === null) {
@@ -71,8 +133,8 @@ export async function runDoctor(argv: string[]): Promise<number> {
 		checkFresh(context),
 		checkReconciled(context),
 	]);
-	const environment = await collectEnvironmentFacts(context);
-	const facts = [installed.fact, live, fresh.fact, reconciled, retentionFact(), ...environment];
+	const [environment, mirrors] = await Promise.all([collectEnvironmentFacts(context), mirrorFacts(home, config)]);
+	const facts = [installed.fact, live, fresh.fact, reconciled, retentionFact(), ...environment, ...mirrors];
 	if (latestVersionPromise !== null) {
 		facts.push(versionFact(packbatVersion(), await latestVersionPromise));
 	}
