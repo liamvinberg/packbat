@@ -3,7 +3,7 @@ import { CheckoutResult } from "../../../components/checkout-result";
 
 export const Route = createFileRoute("/cloud/checkout/success")({
 	component: CheckoutSuccessPage,
-	head: () => ({ meta: [{ title: "Packbat Cloud is active" }] }),
+	head: () => ({ meta: [{ title: "Packbat Cloud payment complete" }] }),
 });
 
 function CheckoutSuccessPage() {
@@ -18,8 +18,8 @@ function CheckoutSuccessPage() {
 				</a>
 			}
 			detail="Return to the terminal. Packbat will continue automatically as soon as Stripe confirms your subscription."
-			status="Payment complete. Waiting for the terminal to continue."
-			title="Packbat Cloud is active."
+			status="Stripe is confirming your subscription."
+			title="Payment complete."
 		/>
 	);
 }
