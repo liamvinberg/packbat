@@ -1,6 +1,6 @@
 import { env, exports } from "cloudflare:workers";
 
-export const TEST_STRIPE_API_VERSION = "2026-02-25.clover";
+export const TEST_STRIPE_API_VERSION = "2026-06-24.dahlia";
 
 function bytesToHex(bytes: Uint8Array): string {
 	return Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");

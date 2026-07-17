@@ -1,4 +1,4 @@
-export const STRIPE_API_VERSION = "2026-02-25.clover";
+export const STRIPE_API_VERSION = "2026-06-24.dahlia";
 const WEBHOOK_TOLERANCE_SECONDS = 5 * 60;
 
 export interface StripeBindings {

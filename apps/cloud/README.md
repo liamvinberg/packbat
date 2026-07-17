@@ -47,7 +47,7 @@ bucket only; `R2_BUCKET_NAME` is the private bucket's configured name.
    billing identity or email.
 3. Configure the hosted Customer Portal for payment-method changes, invoices, and cancellation at period end. Do
    not expose plan quantities, teams, trial, or a second product tier.
-4. Create an HTTPS webhook endpoint at `/v1/billing/webhook`, pinned to Stripe API `2026-02-25.clover`, with only
+4. Create an HTTPS webhook endpoint at `/v1/billing/webhook`, pinned to Stripe API `2026-06-24.dahlia`, with only
    `customer.subscription.created`, `customer.subscription.updated`, and `customer.subscription.deleted`. Store its
    distinct signing secret as `STRIPE_WEBHOOK_SECRET` and set `STRIPE_LIVEMODE=true` for production.
 5. Make both Checkout return pages real before launch. The success page tells the user to return to the terminal;

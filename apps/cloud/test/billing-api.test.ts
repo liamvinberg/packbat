@@ -111,7 +111,7 @@ describe("hosted billing", () => {
 
 		const customer = records[0];
 		expect(customer?.headers.get("Authorization")).toBe(`Bearer ${env.STRIPE_SECRET_KEY}`);
-		expect(customer?.headers.get("Stripe-Version")).toBe("2026-02-25.clover");
+		expect(customer?.headers.get("Stripe-Version")).toBe("2026-06-24.dahlia");
 		expect(customer?.headers.get("Idempotency-Key")).toBe(`packbat-customer-${linked.account.id}`);
 		expect(customer?.parameters.get("metadata[packbat_user_id]")).toBe(linked.account.id);
 
