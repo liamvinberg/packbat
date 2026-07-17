@@ -15,7 +15,7 @@ export function Hero() {
 					fill="var(--color-surface)"
 				/>
 			</svg>
-			<div className="relative mx-auto flex h-full w-full max-w-[1440px] flex-col items-start px-[20px] pt-[72px] pb-[56px] min-[900px]:justify-center min-[900px]:px-[64px] min-[900px]:py-0">
+			<div className="relative mx-auto flex h-full w-full max-w-[1440px] flex-col items-start px-[20px] pt-[72px] pb-[56px] min-[900px]:px-[64px] min-[900px]:py-[80px]">
 				<h1 className="flex flex-col items-start gap-[8px] font-display font-black tracking-display min-[900px]:gap-[10px]">
 					<span className="text-display-fluid text-ink">
 						<span className="min-[900px]:block">Claude Code deletes your</span>{" "}
