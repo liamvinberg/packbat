@@ -25,6 +25,19 @@ const billingStatusSchema = z.strictObject({
 
 const urlSchema = z.strictObject({ url: z.url() });
 const machineSchema = z.strictObject({ id: z.string().regex(/^[A-Za-z0-9_-]{24}$/u) });
+const cloudMachineSchema = z.strictObject({
+	createdAt: z.iso.datetime(),
+	id: machineSchema.shape.id,
+});
+const cloudMachineObjectSchema = z.strictObject({
+	key: z.string().min(1),
+	size: z.number().int().nonnegative().safe(),
+});
+const cloudMachinesSchema = z.strictObject({ machines: z.array(cloudMachineSchema) });
+const cloudMachineObjectsSchema = z.strictObject({
+	cursor: z.string().min(1).optional(),
+	objects: z.array(cloudMachineObjectSchema),
+});
 const uploadSchema = z.union([
 	z.strictObject({
 		reservationId: z.uuid(),
@@ -170,6 +183,37 @@ export async function createCloudMachine(home: PackbatHome): Promise<string> {
 			"machine registration",
 		)
 	).id;
+}
+
+export async function listCloudMachines(home: PackbatHome): Promise<Array<z.infer<typeof cloudMachineSchema>>> {
+	return (await parsedResponse(await authenticatedFetch(home, "/v1/machines"), cloudMachinesSchema, "machine listing"))
+		.machines;
+}
+
+export async function listCloudMachineObjects(
+	home: PackbatHome,
+	machineRemoteId: string,
+): Promise<Array<z.infer<typeof cloudMachineObjectSchema>>> {
+	const objects: Array<z.infer<typeof cloudMachineObjectSchema>> = [];
+	const seenCursors = new Set<string>();
+	let cursor: string | undefined;
+	do {
+		const query = cursor === undefined ? "" : `?${new URLSearchParams({ cursor })}`;
+		const page = await parsedResponse(
+			await authenticatedFetch(home, `/v1/machines/${encodeURIComponent(machineRemoteId)}/objects${query}`),
+			cloudMachineObjectsSchema,
+			"machine object listing",
+		);
+		objects.push(...page.objects);
+		cursor = page.cursor;
+		if (cursor !== undefined && seenCursors.has(cursor)) {
+			throw new PackbatError("Packbat Cloud returned a repeated machine object cursor");
+		}
+		if (cursor !== undefined) {
+			seenCursors.add(cursor);
+		}
+	} while (cursor !== undefined);
+	return objects;
 }
 
 export async function revokeCloudCredential(home: PackbatHome): Promise<void> {

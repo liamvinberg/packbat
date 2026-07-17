@@ -61,7 +61,8 @@ function machineNameIsSafe(machine: string): boolean {
 async function pullObject(options: {
 	remote: ArchiveRemote;
 	identity: string;
-	machine: string;
+	localMachine: string;
+	remoteMachine: string;
 	objectPath: string;
 	destination: string;
 	sha256: string | undefined;
@@ -74,12 +75,12 @@ async function pullObject(options: {
 	const ciphertextPath = temporaryPath(options.destination, "ciphertext");
 	const plaintextPath = temporaryPath(options.destination, "plaintext");
 	try {
-		await options.remote.getArchiveObject(options.machine, options.objectPath, ciphertextPath);
+		await options.remote.getArchiveObject(options.remoteMachine, options.objectPath, ciphertextPath);
 		const plaintext = await decryptWithIdentity(options.identity, await readFile(ciphertextPath));
 		if (options.sha256 !== undefined) {
 			const actual = createHash("sha256").update(plaintext).digest("hex");
 			if (actual !== options.sha256) {
-				throw new PackbatError(`sha256 mismatch for ${options.machine}/${options.objectPath}`);
+				throw new PackbatError(`sha256 mismatch for ${options.localMachine}/${options.objectPath}`);
 			}
 		}
 		await writeFile(plaintextPath, plaintext);
@@ -98,19 +99,33 @@ async function mirrorMachine(options: {
 	remote: ArchiveRemote;
 	identity: string;
 	archiveRoot: string;
-	machine: string;
-}): Promise<MachineMirrorResult> {
-	const machineRoot = join(options.archiveRoot, options.machine);
-	const indexPath = join(machineRoot, "index.jsonl");
-	await mkdir(machineRoot, { recursive: true });
-	const encryptedIndexPath = temporaryPath(indexPath, "ciphertext");
-	const decryptedIndexPath = temporaryPath(indexPath, "plaintext");
+	currentMachine: string;
+	handle: string;
+	handleIsName: boolean;
+}): Promise<MachineMirrorResult | null> {
+	await mkdir(options.archiveRoot, { recursive: true });
+	const temporaryIndexPath = join(options.archiveRoot, "index.jsonl");
+	const encryptedIndexPath = temporaryPath(temporaryIndexPath, "ciphertext");
+	const decryptedIndexPath = temporaryPath(temporaryIndexPath, "plaintext");
 	try {
-		await options.remote.getIndex(options.machine, encryptedIndexPath);
+		await options.remote.getIndex(options.handle, encryptedIndexPath);
 		const indexBytes = await decryptWithIdentity(options.identity, await readFile(encryptedIndexPath));
 		await writeFile(decryptedIndexPath, indexBytes);
 		const index = await readIndex(decryptedIndexPath);
-		const objects = await options.remote.listMachineObjects(options.machine);
+		const indexedMachines = new Set([...index.records.values()].map((record) => record.machine));
+		const localMachine = options.handleIsName
+			? options.handle
+			: indexedMachines.size === 1
+				? indexedMachines.values().next().value
+				: undefined;
+		if (localMachine === undefined || localMachine === options.currentMachine || !machineNameIsSafe(localMachine)) {
+			return null;
+		}
+
+		const machineRoot = join(options.archiveRoot, localMachine);
+		const indexPath = join(machineRoot, "index.jsonl");
+		await mkdir(machineRoot, { recursive: true });
+		const objects = await options.remote.listMachineObjects(options.handle);
 		if (objects === null) {
 			throw new PackbatError("remote does not support archive object listing");
 		}
@@ -120,7 +135,7 @@ async function mirrorMachine(options: {
 		for (const objectPath of objects) {
 			const parts = safeRelativeParts(objectPath);
 			if (parts === null) {
-				errors.push(`${options.machine}/${objectPath}: unsafe remote object path`);
+				errors.push(`${localMachine}/${objectPath}: unsafe remote object path`);
 				continue;
 			}
 			const record = index.records.get(objectPath);
@@ -129,7 +144,8 @@ async function mirrorMachine(options: {
 					await pullObject({
 						remote: options.remote,
 						identity: options.identity,
-						machine: options.machine,
+						localMachine,
+						remoteMachine: options.handle,
 						objectPath,
 						destination: join(machineRoot, ...parts),
 						sha256: record?.sha256,
@@ -139,29 +155,29 @@ async function mirrorMachine(options: {
 					pulled += 1;
 				}
 			} catch (error) {
-				errors.push(`${options.machine}/${objectPath}: ${error instanceof Error ? error.message : String(error)}`);
+				errors.push(`${localMachine}/${objectPath}: ${error instanceof Error ? error.message : String(error)}`);
 			}
 		}
 
 		for (const record of index.records.values()) {
 			const parts = safeRelativeParts(record.path);
 			if (parts === null) {
-				errors.push(`${options.machine}/${record.path}: unsafe index path`);
+				errors.push(`${localMachine}/${record.path}: unsafe index path`);
 				continue;
 			}
 			try {
 				if (!(await fileExists(join(machineRoot, ...parts)))) {
-					errors.push(`${options.machine}/${record.path}: indexed object is missing`);
+					errors.push(`${localMachine}/${record.path}: indexed object is missing`);
 				}
 			} catch (error) {
-				errors.push(`${options.machine}/${record.path}: ${error instanceof Error ? error.message : String(error)}`);
+				errors.push(`${localMachine}/${record.path}: ${error instanceof Error ? error.message : String(error)}`);
 			}
 		}
 
 		if (await fileExists(indexPath)) {
 			const localIndex = await readIndex(indexPath);
 			if ([...localIndex.records.keys()].some((path) => !index.records.has(path))) {
-				errors.push(`${options.machine}: remote index regressed`);
+				errors.push(`${localMachine}: remote index regressed`);
 			}
 		}
 
@@ -187,17 +203,27 @@ async function mirrorRemote(
 	const machines = [...new Set(listedMachines)].filter((machine) => machine !== config.machine);
 	let pulled = 0;
 	const errors: string[] = [];
-	for (const machine of machines) {
-		if (!machineNameIsSafe(machine)) {
-			errors.push(`${machine}: unsafe remote machine name`);
+	for (const handle of machines) {
+		if (!machineNameIsSafe(handle) && remote.config.type !== "cloud") {
+			errors.push(`${handle}: unsafe remote machine name`);
 			continue;
 		}
 		try {
-			const result = await mirrorMachine({ remote, identity, archiveRoot: config.archiveRoot, machine });
+			const result = await mirrorMachine({
+				remote,
+				identity,
+				archiveRoot: config.archiveRoot,
+				currentMachine: config.machine,
+				handle,
+				handleIsName: remote.config.type !== "cloud",
+			});
+			if (result === null) {
+				continue;
+			}
 			pulled += result.pulled;
 			errors.push(...result.errors);
 		} catch (error) {
-			errors.push(`${machine}: ${error instanceof Error ? error.message : String(error)}`);
+			errors.push(`${handle}: ${error instanceof Error ? error.message : String(error)}`);
 		}
 	}
 	const lastPulledAt = new Date().toISOString();

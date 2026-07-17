@@ -1,9 +1,11 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { chmod, mkdir, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { join } from "node:path";
+import { zstdCompressSync } from "node:zlib";
 import { afterEach, describe, expect, test } from "vitest";
+import { encryptToRecipient } from "../src/offbox/age.js";
 import { generateTestIdentity } from "./helpers/age.js";
 import { makeClaudeStore } from "./helpers/fixtures.js";
 import { makeTempHome, runCli } from "./helpers/run-cli.js";
@@ -821,5 +823,162 @@ machine remote: ${machineRemoteId}
 			offbox: { remotes: Array<{ type: string }> };
 		};
 		expect(after.offbox.remotes.map(({ type }) => type)).toEqual(["rclone"]);
+	});
+
+	test("mirrors a foreign Cloud machine under its index name and does not pull its archive twice", async () => {
+		const layout = await cloudLayout();
+		const { identity, recipient } = await generateTestIdentity();
+		const ownMachineRemoteId = "abcdefghijklmnopqrstuvwx";
+		const foreignMachineRemoteId = "ZYXWVUTSRQPONMLKJIHGFEDC";
+		const foreignMachine = "foreign-cloud-machine";
+		const fixture = await makeClaudeStore(join(layout.home, "foreign-store"), { sidecars: [] });
+		const source = await readFile(fixture.files[0]!.absPath);
+		const archive = zstdCompressSync(source);
+		const archivePath = `claude-code/${fixture.id}.jsonl.zst`;
+		const index = Buffer.from(
+			`${JSON.stringify({
+				v: 1,
+				path: archivePath,
+				harness: "claude-code",
+				machine: foreignMachine,
+				unit: fixture.id,
+				role: "main",
+				source: "/synthetic/foreign-session.jsonl",
+				sourceMtimeMs: 1_767_322_645_000,
+				sourceSize: source.byteLength,
+				storedSize: archive.byteLength,
+				sha256: createHash("sha256").update(archive).digest("hex"),
+				archivedAt: "2026-01-02T03:04:05.000Z",
+			})}\n`,
+		);
+		const objects = new Map<string, Buffer>([
+			[`${foreignMachineRemoteId}/index.jsonl.age`, Buffer.from(await encryptToRecipient(recipient, index))],
+			[`${foreignMachineRemoteId}/${archivePath}.age`, Buffer.from(await encryptToRecipient(recipient, archive))],
+		]);
+		await mkdir(layout.packbatHome, { recursive: true });
+		await Promise.all([
+			writeCredentials(layout.packbatHome),
+			writeFile(join(layout.packbatHome, "identity.txt"), `${identity}\n`, { mode: 0o600 }),
+			writeFile(
+				join(layout.packbatHome, "config.json"),
+				`${JSON.stringify({
+					version: 2,
+					machine: "cloud-machine",
+					archiveRoot: layout.archiveRoot,
+					sweep: { intervalMinutes: 60 },
+					offbox: {
+						mode: "configured",
+						recipient,
+						remotes: [{ type: "cloud", machineRemoteId: ownMachineRemoteId }],
+					},
+				})}\n`,
+			),
+		]);
+
+		const reservations = new Map<string, { key: string; machineRemoteId: string }>();
+		let foreignArchiveDownloads = 0;
+		const baseUrl = await listen(async (request, response, origin) => {
+			const url = new URL(request.url ?? "/", origin);
+			if (url.pathname === "/v1/machines" && request.method === "GET") {
+				json(response, 200, {
+					machines: [
+						{ id: ownMachineRemoteId, createdAt: "2026-01-01T00:00:00.000Z" },
+						{ id: foreignMachineRemoteId, createdAt: "2026-01-02T00:00:00.000Z" },
+					],
+				});
+				return;
+			}
+			if (url.pathname === `/v1/machines/${foreignMachineRemoteId}/objects`) {
+				if (url.searchParams.get("cursor") === null) {
+					json(response, 200, {
+						objects: [
+							{ key: "index.jsonl.age", size: objects.get(`${foreignMachineRemoteId}/index.jsonl.age`)!.byteLength },
+						],
+						cursor: "index.jsonl.age",
+					});
+				} else {
+					json(response, 200, {
+						objects: [
+							{
+								key: `${archivePath}.age`,
+								size: objects.get(`${foreignMachineRemoteId}/${archivePath}.age`)!.byteLength,
+							},
+						],
+					});
+				}
+				return;
+			}
+			if (url.pathname === "/v1/downloads") {
+				const input = JSON.parse((await body(request)).toString("utf8")) as {
+					logicalObjectKey: string;
+					machineRemoteId: string;
+				};
+				const objectKey = `${input.machineRemoteId}/${input.logicalObjectKey}`;
+				if (!objects.has(objectKey)) {
+					json(response, 404, { error: "object_not_found" });
+					return;
+				}
+				json(response, 200, {
+					expiresAt: "2099-01-01T00:00:00.000Z",
+					url: `${origin}/objects/${Buffer.from(objectKey).toString("base64url")}`,
+				});
+				return;
+			}
+			if (url.pathname === "/v1/uploads/reservations") {
+				const input = JSON.parse((await body(request)).toString("utf8")) as {
+					logicalObjectKey: string;
+					machineRemoteId: string;
+				};
+				const id = randomUUID();
+				reservations.set(id, { key: input.logicalObjectKey, machineRemoteId: input.machineRemoteId });
+				json(response, 201, {
+					reservationId: id,
+					state: "pending",
+					upload: {
+						expiresAt: "2099-01-01T00:00:00.000Z",
+						headers: { "Content-Type": "application/octet-stream" },
+						url: `${origin}/uploads/${id}`,
+					},
+				});
+				return;
+			}
+			if (url.pathname.startsWith("/uploads/") && request.method === "PUT") {
+				const id = url.pathname.slice("/uploads/".length);
+				const reservation = reservations.get(id);
+				if (reservation === undefined) throw new Error("unknown upload reservation");
+				objects.set(`${reservation.machineRemoteId}/${reservation.key}`, await body(request));
+				response.writeHead(200);
+				response.end();
+				return;
+			}
+			if (url.pathname.match(/^\/v1\/uploads\/[^/]+\/finalize$/u)) {
+				json(response, 200, { etag: `etag-${reservations.size}` });
+				return;
+			}
+			if (url.pathname.startsWith("/objects/")) {
+				const objectKey = Buffer.from(url.pathname.slice("/objects/".length), "base64url").toString("utf8");
+				if (objectKey === `${foreignMachineRemoteId}/${archivePath}.age`) {
+					foreignArchiveDownloads += 1;
+				}
+				response.writeHead(200, { "Content-Type": "application/octet-stream" });
+				response.end(objects.get(objectKey));
+				return;
+			}
+			json(response, 404, { error: "not_found" });
+		});
+		const env = { ...layout.env, PACKBAT_CLOUD_API_URL: baseUrl };
+
+		const first = await runCli(["sync"], { home: layout.home, env });
+		expect(first.code, first.stderr).toBe(0);
+		expect(first.stdout).toContain("mirrored 1");
+		expect(await readFile(join(layout.archiveRoot, foreignMachine, archivePath))).toEqual(archive);
+		const searched = await runCli(["search", "fixture prompt"], { home: layout.home, env });
+		expect(searched.code, searched.stderr).toBe(0);
+		expect(searched.stdout).toContain("Synthetic fixture prompt.");
+
+		const second = await runCli(["sync"], { home: layout.home, env });
+		expect(second.code, second.stderr).toBe(0);
+		expect(second.stdout).not.toContain("mirrored");
+		expect(foreignArchiveDownloads).toBe(1);
 	});
 });

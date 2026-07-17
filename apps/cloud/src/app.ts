@@ -30,6 +30,7 @@ import {
 	type StorageBindings,
 	StorageError,
 } from "./storage/broker.js";
+import { listMachineObjects, listMachineRemotes } from "./storage/catalog.js";
 import { INDEX_OBJECT_KEY, isLogicalObjectKey } from "./storage/object-key.js";
 import { compareVersions, latestCliVersion } from "./versions.js";
 
@@ -103,7 +104,7 @@ const checkoutSchema = z.strictObject({
 
 class ApiError extends Error {
 	constructor(
-		readonly status: 400 | 401 | 426 | 429,
+		readonly status: 400 | 401 | 404 | 426 | 429,
 		readonly code: string,
 	) {
 		super(code);
@@ -330,6 +331,31 @@ export function createApp() {
 		await readJson(context.req.raw, machineSchema);
 		const id = await createMachineRemote(context.env.DB, context.get("principal").userId, now());
 		return context.json({ id }, 201);
+	});
+
+	app.get("/v1/machines", authMiddleware(), async (context) => {
+		const machines = await listMachineRemotes(context.env.DB, context.get("principal").userId);
+		return context.json({
+			machines: machines.map((machine) => ({ id: machine.id, createdAt: timestamp(machine.createdAt) })),
+		});
+	});
+
+	app.get("/v1/machines/:machineRemoteId/objects", authMiddleware(), async (context) => {
+		const machineRemoteId = machineRemoteIdSchema.safeParse(context.req.param("machineRemoteId"));
+		const cursor = logicalObjectKeySchema.optional().safeParse(context.req.query("cursor"));
+		if (!machineRemoteId.success || !cursor.success) {
+			throw new ApiError(400, "invalid_request");
+		}
+		const page = await listMachineObjects(
+			context.env.DB,
+			context.get("principal").userId,
+			machineRemoteId.data,
+			cursor.data,
+		);
+		if (page === null) {
+			throw new ApiError(404, "machine_not_found");
+		}
+		return context.json(page);
 	});
 
 	app.post("/v1/uploads/reservations", authMiddleware(), async (context) => {

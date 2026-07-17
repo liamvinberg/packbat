@@ -1,7 +1,13 @@
 import { randomUUID } from "node:crypto";
 import { readdir, readFile } from "node:fs/promises";
 import { join, relative, sep } from "node:path";
-import { cloudDownloadUrl, downloadCloudObject, uploadCloudObject } from "../cloud/client.js";
+import {
+	cloudDownloadUrl,
+	downloadCloudObject,
+	listCloudMachineObjects,
+	listCloudMachines,
+	uploadCloudObject,
+} from "../cloud/client.js";
 import { type RemoteConfig, remoteDestination, remoteStatePath } from "../core/config.js";
 import { isEnoent } from "../core/fs.js";
 import type { PackbatHome } from "../core/home.js";
@@ -126,9 +132,10 @@ async function archiveCiphertexts(sourceRoot: string, machine: string): Promise<
 
 class CloudArchiveRemote implements ArchiveRemote {
 	readonly destination: string;
-	readonly supportsMirror = false;
+	readonly supportsMirror = true;
 	private sweepId = randomUUID();
 	private expectedArchiveCount = 0;
+	private mirrorHandles = new Set<string>();
 	private readonly statePath: string;
 
 	constructor(
@@ -137,6 +144,10 @@ class CloudArchiveRemote implements ArchiveRemote {
 	) {
 		this.destination = remoteDestination(config);
 		this.statePath = join(remoteStatePath(home, config), "cloud.json");
+	}
+
+	private machineRemoteId(machine: string): string {
+		return this.mirrorHandles.has(machine) ? machine : this.config.machineRemoteId;
 	}
 
 	async indexExists(_machine: string): Promise<boolean> {
@@ -172,8 +183,8 @@ class CloudArchiveRemote implements ArchiveRemote {
 		await writeAtomicJson(this.statePath, { v: 1, currentIndexEtag: etag });
 	}
 
-	async getIndex(_machine: string, destinationPath: string): Promise<void> {
-		await downloadCloudObject(this.home, this.config.machineRemoteId, "index.jsonl.age", destinationPath);
+	async getIndex(machine: string, destinationPath: string): Promise<void> {
+		await downloadCloudObject(this.home, this.machineRemoteId(machine), "index.jsonl.age", destinationPath);
 	}
 
 	async getArchiveObject(machine: string, archivePath: string, destinationPath: string): Promise<void> {
@@ -181,15 +192,22 @@ class CloudArchiveRemote implements ArchiveRemote {
 		const logicalKey = `${archivePath.startsWith(prefix) ? archivePath.slice(prefix.length) : archivePath}.age`
 			.split(sep)
 			.join("/");
-		await downloadCloudObject(this.home, this.config.machineRemoteId, logicalKey, destinationPath);
+		await downloadCloudObject(this.home, this.machineRemoteId(machine), logicalKey, destinationPath);
 	}
 
-	async listMachines(): Promise<null> {
-		return null;
+	async listMachines(): Promise<string[]> {
+		const handles = (await listCloudMachines(this.home))
+			.map((machine) => machine.id)
+			.filter((machineRemoteId) => machineRemoteId !== this.config.machineRemoteId);
+		this.mirrorHandles = new Set(handles);
+		return handles;
 	}
 
-	async listMachineObjects(_machine: string): Promise<null> {
-		return null;
+	async listMachineObjects(machine: string): Promise<string[]> {
+		return (await listCloudMachineObjects(this.home, this.machineRemoteId(machine)))
+			.map((object) => object.key)
+			.filter((key) => key !== "index.jsonl.age" && key.endsWith(".age"))
+			.map((key) => key.slice(0, -".age".length));
 	}
 }
 

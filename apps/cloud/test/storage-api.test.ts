@@ -35,6 +35,12 @@ function jsonRequest(path: string, body: unknown, accessToken?: string): Request
 	});
 }
 
+function getRequest(path: string, accessToken: string): Request {
+	return new Request(`https://api.packbat.dev${path}`, {
+		headers: { Authorization: `Bearer ${accessToken}` },
+	});
+}
+
 function mockGitHubUsers(usersByToken: Record<string, { id: number; login: string }>): void {
 	vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
 		const request = new Request(input, init);
@@ -757,5 +763,123 @@ describe("tenant isolation", () => {
 		);
 		expect(otherDownload.status).toBe(404);
 		expect(await otherDownload.json()).toEqual({ error: "object_not_found" });
+	});
+});
+
+describe("mirror reads", () => {
+	it("lists every machine remote for only the authenticated account", async () => {
+		mockGitHubUsers({
+			"github-one": { id: 1, login: "one" },
+			"github-two": { id: 2, login: "two" },
+		});
+		const first = await exchange("github-one");
+		const second = await exchange("github-two");
+		const firstMachines = [await createMachine(first.accessToken), await createMachine(first.accessToken)];
+		const secondMachine = await createMachine(second.accessToken);
+
+		const firstResponse = await exports.default.fetch(getRequest("/v1/machines", first.accessToken));
+		expect(firstResponse.status).toBe(200);
+		const firstBody = (await firstResponse.json()) as {
+			machines: Array<{ createdAt: string; id: string }>;
+		};
+		expect(firstBody.machines.map(({ id }) => id).sort()).toEqual(firstMachines.sort());
+		expect(firstBody.machines).toEqual(
+			expect.arrayContaining(
+				firstMachines.map((id) => ({ id, createdAt: expect.stringMatching(/^\d{4}-\d{2}-\d{2}T/u) })),
+			),
+		);
+		expect(firstBody.machines.map(({ id }) => id)).not.toContain(secondMachine);
+
+		const secondResponse = await exports.default.fetch(getRequest("/v1/machines", second.accessToken));
+		expect(secondResponse.status).toBe(200);
+		expect(await secondResponse.json()).toEqual({
+			machines: [{ id: secondMachine, createdAt: expect.stringMatching(/^\d{4}-\d{2}-\d{2}T/u) }],
+		});
+	});
+
+	it("paginates ledger objects and hides foreign or unknown machines behind 404", async () => {
+		mockGitHubUsers({
+			"github-one": { id: 1, login: "one" },
+			"github-two": { id: 2, login: "two" },
+		});
+		const first = await exchange("github-one");
+		const second = await exchange("github-two");
+		const machineRemoteId = await createMachine(first.accessToken);
+		const keys = Array.from(
+			{ length: 1_001 },
+			(_, index) => `claude-code/session-${String(index).padStart(4, "0")}.jsonl.zst.age`,
+		);
+		for (let start = 0; start < keys.length; start += 100) {
+			await env.DB.batch(
+				keys
+					.slice(start, start + 100)
+					.map((key, index) =>
+						env.DB.prepare(
+							"INSERT INTO object_ledger (user_id, machine_remote_id, logical_object_key, bytes, etag, last_completed_at) VALUES (?, ?, ?, ?, ?, ?)",
+						).bind(first.account.id, machineRemoteId, key, start + index, `etag-${start + index}`, 1_700_000_000),
+					),
+			);
+		}
+
+		const firstPageResponse = await exports.default.fetch(
+			getRequest(`/v1/machines/${machineRemoteId}/objects`, first.accessToken),
+		);
+		expect(firstPageResponse.status).toBe(200);
+		const firstPage = (await firstPageResponse.json()) as {
+			cursor?: string;
+			objects: Array<{ key: string; size: number }>;
+		};
+		expect(firstPage.objects).toHaveLength(1_000);
+		expect(firstPage.objects[0]).toEqual({ key: keys[0], size: 0 });
+		expect(firstPage.objects.at(-1)).toEqual({ key: keys[999], size: 999 });
+		expect(firstPage.cursor).toBe(keys[999]);
+
+		const secondPageResponse = await exports.default.fetch(
+			getRequest(
+				`/v1/machines/${machineRemoteId}/objects?${new URLSearchParams({ cursor: firstPage.cursor ?? "" })}`,
+				first.accessToken,
+			),
+		);
+		expect(secondPageResponse.status).toBe(200);
+		expect(await secondPageResponse.json()).toEqual({ objects: [{ key: keys[1000], size: 1_000 }] });
+
+		for (const inaccessible of [
+			await exports.default.fetch(getRequest(`/v1/machines/${machineRemoteId}/objects`, second.accessToken)),
+			await exports.default.fetch(getRequest("/v1/machines/abcdefghijklmnopqrstuvwx/objects", first.accessToken)),
+		]) {
+			expect(inaccessible.status).toBe(404);
+			expect(await inaccessible.json()).toEqual({ error: "machine_not_found" });
+		}
+	});
+
+	it("presigns a same-account foreign machine download and rejects another account", async () => {
+		mockGitHubUsers({
+			"github-one": { id: 1, login: "one" },
+			"github-two": { id: 2, login: "two" },
+		});
+		const first = await exchange("github-one");
+		const second = await exchange("github-two");
+		await createMachine(first.accessToken);
+		const foreignMachineRemoteId = await createMachine(first.accessToken);
+		const logicalObjectKey = "codex/foreign-session.jsonl.zst.age";
+		await env.DB.prepare(
+			"INSERT INTO object_ledger (user_id, machine_remote_id, logical_object_key, bytes, etag, last_completed_at) VALUES (?, ?, ?, ?, ?, ?)",
+		)
+			.bind(first.account.id, foreignMachineRemoteId, logicalObjectKey, 123, "foreign-etag", 1_700_000_000)
+			.run();
+
+		const allowed = await exports.default.fetch(
+			jsonRequest("/v1/downloads", { logicalObjectKey, machineRemoteId: foreignMachineRemoteId }, first.accessToken),
+		);
+		expect(allowed.status).toBe(200);
+		const download = (await allowed.json()) as { expiresAt: string; url: string };
+		expect(download.expiresAt).toMatch(/^\d{4}-\d{2}-\d{2}T/u);
+		expect(new URL(download.url).pathname).toContain(`/machines/${foreignMachineRemoteId}/${logicalObjectKey}`);
+
+		const denied = await exports.default.fetch(
+			jsonRequest("/v1/downloads", { logicalObjectKey, machineRemoteId: foreignMachineRemoteId }, second.accessToken),
+		);
+		expect(denied.status).toBe(404);
+		expect(await denied.json()).toEqual({ error: "object_not_found" });
 	});
 });
