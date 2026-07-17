@@ -375,6 +375,87 @@ machine remote: ${machineRemoteId}
 		);
 	});
 
+	test("refreshes an expired access token through the versioned API path", async () => {
+		const layout = await cloudLayout();
+		const { recipient } = await generateTestIdentity();
+		await mkdir(layout.packbatHome, { recursive: true });
+		await writeFile(
+			join(layout.packbatHome, "config.json"),
+			`${JSON.stringify({
+				version: 2,
+				machine: "refresh-machine",
+				archiveRoot: layout.archiveRoot,
+				sweep: { intervalMinutes: 60 },
+				offbox: {
+					mode: "configured",
+					recipient,
+					remotes: [{ type: "cloud", machineRemoteId: "abcdefghijklmnopqrstuvwx" }],
+				},
+			})}\n`,
+		);
+		const credentialsPath = join(layout.packbatHome, "cloud-credentials.json");
+		await writeFile(
+			credentialsPath,
+			`${JSON.stringify({
+				v: 1,
+				accessToken: "stale-access-token",
+				accessTokenExpiresAt: "2000-01-01T00:00:00.000Z",
+				checkoutIdempotencyKey: "refresh-link",
+				refreshToken: "live-refresh-token",
+				refreshTokenExpiresAt: "2099-02-01T00:00:00.000Z",
+			})}\n`,
+			{ mode: 0o600 },
+		);
+		const binPath = join(layout.home, "bin-refresh");
+		await mkdir(binPath);
+		await writeFile(join(binPath, "open"), "#!/bin/sh\nexit 0\n", { mode: 0o700 });
+		await chmod(join(binPath, "open"), 0o700);
+		let refreshed = false;
+		const baseUrl = await listen(async (request, response, origin) => {
+			const url = new URL(request.url ?? "/", origin);
+			if (url.pathname === "/v1/auth/refresh") {
+				const payload = JSON.parse((await body(request)).toString("utf8")) as { refreshToken: string };
+				expect(payload.refreshToken).toBe("live-refresh-token");
+				refreshed = true;
+				json(response, 200, {
+					accessToken: "rotated-access-token",
+					accessTokenExpiresAt: "2099-01-01T00:00:00.000Z",
+					account: {
+						graceEndsAt: null,
+						githubLogin: "synthetic-user",
+						id: "11111111-1111-4111-8111-111111111111",
+						quotaBytes: 100_000_000_000,
+						reservedBytes: 0,
+						subscriptionState: "active",
+						usedBytes: 0,
+					},
+					refreshToken: "rotated-refresh-token",
+					refreshTokenExpiresAt: "2099-02-01T00:00:00.000Z",
+					tokenType: "Bearer",
+				});
+				return;
+			}
+			if (url.pathname === "/v1/billing/portal") {
+				json(response, 200, { url: `${origin}/portal` });
+				return;
+			}
+			json(response, 404, { error: "not_found" });
+		});
+
+		const result = await runCli(["cloud", "billing"], {
+			home: layout.home,
+			env: {
+				...layout.env,
+				PACKBAT_CLOUD_API_URL: baseUrl,
+				PATH: `${binPath}:${process.env.PATH ?? ""}`,
+			},
+		});
+
+		expect(result.code, result.stderr).toBe(0);
+		expect(refreshed).toBe(true);
+		expect(await readFile(credentialsPath, "utf8")).toContain("rotated-refresh-token");
+	});
+
 	test("links from GitHub Device Flow without persisting the provider token", async () => {
 		const layout = await cloudLayout();
 		const { recipient } = await generateTestIdentity();

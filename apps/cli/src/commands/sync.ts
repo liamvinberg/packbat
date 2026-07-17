@@ -1,4 +1,4 @@
-import { cloudUpdateAvailableVersion } from "../cloud/client.js";
+import { cloudUpdateAvailableVersion } from "../cloud/api-fetch.js";
 import { sweep } from "../core/archive.js";
 import { assertZstdSupport } from "../core/compress.js";
 import { loadConfig } from "../core/config.js";
@@ -116,7 +116,6 @@ export async function runSync(argv: string[], output: SyncOutputOptions = {}): P
 	if (!locked.acquired) {
 		output.onBusy?.();
 		reportSummary("sync already running", output);
-		reportCloudUpdate();
 		return 0;
 	}
 	return locked.value;

@@ -7,7 +7,7 @@ import { pipeline } from "node:stream/promises";
 import { z } from "zod";
 import { PackbatError } from "../core/errors.js";
 import type { PackbatHome } from "../core/home.js";
-import { packbatVersion } from "../core/version.js";
+import { packbatApiFetch } from "./api-fetch.js";
 import { type CloudTokenResponse, cloudAccessToken, cloudTokenResponseSchema } from "./credentials.js";
 
 const DEFAULT_API_BASE_URL = "https://api.packbat.dev";
@@ -43,8 +43,6 @@ const clientConfigSchema = z.strictObject({ githubClientId: z.string().min(1) })
 
 export type CloudBillingStatus = z.infer<typeof billingStatusSchema>;
 
-let availableUpdateVersion: string | null = null;
-
 export class CloudApiError extends Error {
 	constructor(
 		readonly status: number,
@@ -60,10 +58,6 @@ export class CloudApiError extends Error {
 						: `Packbat Cloud request failed (${code})`,
 		);
 	}
-}
-
-export function cloudUpdateAvailableVersion(): string | null {
-	return availableUpdateVersion;
 }
 
 export function cloudApiBaseUrl(env: NodeJS.ProcessEnv = process.env): string {
@@ -89,14 +83,6 @@ async function parsedResponse<T>(response: Response, schema: z.ZodType<T>, opera
 		throw new PackbatError(`Packbat Cloud returned an invalid ${operation} response`);
 	}
 	return result.data;
-}
-
-async function packbatApiFetch(input: string, init: RequestInit = {}): Promise<Response> {
-	const headers = new Headers(init.headers);
-	headers.set("x-packbat-cli-version", packbatVersion());
-	const response = await fetch(input, { ...init, headers });
-	availableUpdateVersion = response.headers.get("x-packbat-cli-update") ?? availableUpdateVersion;
-	return response;
 }
 
 async function authenticatedFetch(

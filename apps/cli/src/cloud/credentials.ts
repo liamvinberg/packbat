@@ -6,6 +6,7 @@ import { PackbatError } from "../core/errors.js";
 import { isEnoent } from "../core/fs.js";
 import type { PackbatHome } from "../core/home.js";
 import { writePrivateFile } from "../core/private-file.js";
+import { packbatApiFetch } from "./api-fetch.js";
 
 export const cloudTokenResponseSchema = z.strictObject({
 	accessToken: z.string().min(1),
@@ -131,7 +132,7 @@ export async function refreshCloudCredentials(home: PackbatHome, apiBaseUrl: str
 		if (Date.parse(current.refreshTokenExpiresAt) <= Date.now()) {
 			throw new CloudCredentialError("Packbat Cloud authorization expired; run `packbat cloud link` again");
 		}
-		const response = await fetch(`${apiBaseUrl}/v1/auth/refresh`, {
+		const response = await packbatApiFetch(`${apiBaseUrl}/v1/auth/refresh`, {
 			body: JSON.stringify({ refreshToken: current.refreshToken }),
 			headers: { "Content-Type": "application/json" },
 			method: "POST",
