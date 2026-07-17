@@ -1,0 +1,16 @@
+{
+	"$schema": "https://raw.githubusercontent.com/googleapis/release-please/main/schemas/config.json",
+	"bootstrap-sha": "efbbab9f7ebb5d0d8cac38b1a5e4b2f4a60851c0",
+	"packages": {
+		"apps/cli": {
+			"release-type": "node",
+			"package-name": "packbat",
+			"include-component-in-tag": false,
+			"changelog-sections": [
+				{ "type": "feat", "section": "Features" },
+				{ "type": "fix", "section": "Bug fixes" },
+				{ "type": "polish", "section": "Polish" }
+			]
+		}
+	}
+}
