@@ -1,6 +1,6 @@
 {
 	"name": "packbat",
-	"version": "0.1.0",
+	"version": "0.2.0",
 	"description": "Every agent session, kept. Preserves AI-agent sessions as raw, append-only archives in a store you own.",
 	"license": "MIT",
 	"author": "Liam Vinberg",
