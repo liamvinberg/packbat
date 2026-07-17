@@ -2,7 +2,7 @@ import { cloudUpdateAvailableVersion } from "../cloud/api-fetch.js";
 import { sweep } from "../core/archive.js";
 import { assertZstdSupport } from "../core/compress.js";
 import { loadConfig, type PackbatConfig } from "../core/config.js";
-import { resolveHome, type PackbatHome } from "../core/home.js";
+import { type PackbatHome, resolveHome } from "../core/home.js";
 import { withRetrievalLock, withSyncLock } from "../core/lock.js";
 import { appendLog } from "../core/log.js";
 import { writeRunStamps } from "../core/stamps.js";
