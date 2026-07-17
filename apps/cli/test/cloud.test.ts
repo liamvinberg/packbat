@@ -52,6 +52,18 @@ async function listen(
 	return baseUrl;
 }
 
+// openUrl spawns `open` on darwin and `xdg-open` elsewhere; stub both so the
+// suite behaves identically on every platform CI runs.
+async function stubOpener(dir: string, script: string): Promise<string> {
+	await mkdir(dir, { recursive: true });
+	for (const name of ["open", "xdg-open"]) {
+		const path = join(dir, name);
+		await writeFile(path, script, { mode: 0o700 });
+		await chmod(path, 0o700);
+	}
+	return dir;
+}
+
 async function cloudLayout(): Promise<{
 	home: string;
 	packbatHome: string;
@@ -406,10 +418,7 @@ machine remote: ${machineRemoteId}
 			})}\n`,
 			{ mode: 0o600 },
 		);
-		const binPath = join(layout.home, "bin-refresh");
-		await mkdir(binPath);
-		await writeFile(join(binPath, "open"), "#!/bin/sh\nexit 0\n", { mode: 0o700 });
-		await chmod(join(binPath, "open"), 0o700);
+		const binPath = await stubOpener(join(layout.home, "bin-refresh"), "#!/bin/sh\nexit 0\n");
 		let refreshed = false;
 		const baseUrl = await listen(async (request, response, origin) => {
 			const url = new URL(request.url ?? "/", origin);
@@ -475,11 +484,10 @@ machine remote: ${machineRemoteId}
 			})}\n`,
 		);
 		const openedPath = join(layout.home, "device-opened.txt");
-		const binPath = join(layout.home, "device-bin");
-		await mkdir(binPath);
-		const openPath = join(binPath, "open");
-		await writeFile(openPath, `#!/bin/sh\nprintf '%s\\n' "$1" >> "${openedPath}"\n`, { mode: 0o700 });
-		await chmod(openPath, 0o700);
+		const binPath = await stubOpener(
+			join(layout.home, "device-bin"),
+			`#!/bin/sh\nprintf '%s\\n' "$1" >> "${openedPath}"\n`,
+		);
 		const githubToken = "github-token-must-not-persist";
 		const expectedPaths = [
 			"/v1/client",
@@ -617,10 +625,7 @@ machine remote: ${machineRemoteId}
 		})}\n`;
 		const credentialsPath = join(layout.packbatHome, "cloud-credentials.json");
 		await writeFile(credentialsPath, expiredCredentials, { mode: 0o600 });
-		const binPath = join(layout.home, "bin-expired");
-		await mkdir(binPath);
-		await writeFile(join(binPath, "open"), "#!/bin/sh\nexit 0\n", { mode: 0o700 });
-		await chmod(join(binPath, "open"), 0o700);
+		const binPath = await stubOpener(join(layout.home, "bin-expired"), "#!/bin/sh\nexit 0\n");
 		const githubToken = "github-relink-token";
 		const baseUrl = await listen(async (request, response, origin) => {
 			const url = new URL(request.url ?? "/", origin);
@@ -719,11 +724,7 @@ machine remote: ${machineRemoteId}
 			})}\n`,
 		);
 		const openedPath = join(layout.home, "opened.txt");
-		const binPath = join(layout.home, "bin");
-		await mkdir(binPath);
-		const openPath = join(binPath, "open");
-		await writeFile(openPath, `#!/bin/sh\nprintf '%s\\n' "$1" >> "${openedPath}"\n`, { mode: 0o700 });
-		await chmod(openPath, 0o700);
+		const binPath = await stubOpener(join(layout.home, "bin"), `#!/bin/sh\nprintf '%s\\n' "$1" >> "${openedPath}"\n`);
 
 		let checkoutStarted = false;
 		let stage: "checkout" | "machine" | "portal" | "revoke" | "status-after-checkout" | "status-before-checkout" =
