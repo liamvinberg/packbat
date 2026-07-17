@@ -1,7 +1,7 @@
 import { base64Url } from "../base64-url.js";
 import { logAccountOperationalEventOnce, logOperationalEvent } from "../operations/log.js";
 import { INDEX_OBJECT_KEY, objectKey, userObjectPrefix } from "./object-key.js";
-import { OBJECT_CONTENT_TYPE, signDownload, signUpload } from "./r2-signing.js";
+import { OBJECT_CACHE_CONTROL, OBJECT_CONTENT_TYPE, signDownload, signUpload } from "./r2-signing.js";
 
 type StorageErrorStatus = 402 | 404 | 409 | 413;
 
@@ -107,15 +107,15 @@ function bytesToBase64(value: ArrayBuffer): string {
 }
 
 function matchesReservation(object: R2Object, reservation: ReservationContext): boolean {
+	// R2 validates the signed S3 checksum header, but its Workers binding may omit that checksum on head().
 	return (
 		object.size === reservation.expectedBytes &&
-		object.checksums.sha256 !== undefined &&
-		bytesToBase64(object.checksums.sha256) === reservation.checksumSha256 &&
+		(object.checksums.sha256 === undefined || bytesToBase64(object.checksums.sha256) === reservation.checksumSha256) &&
 		object.httpMetadata?.contentType === OBJECT_CONTENT_TYPE &&
 		object.httpMetadata.contentLanguage === undefined &&
 		object.httpMetadata.contentDisposition === undefined &&
 		object.httpMetadata.contentEncoding === undefined &&
-		object.httpMetadata.cacheControl === undefined &&
+		object.httpMetadata.cacheControl === OBJECT_CACHE_CONTROL &&
 		object.httpMetadata.cacheExpiry === undefined &&
 		Object.keys(object.customMetadata ?? {}).length === 0
 	);

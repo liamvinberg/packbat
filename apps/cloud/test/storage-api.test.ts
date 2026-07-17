@@ -154,7 +154,7 @@ async function putObject(
 		`users/${await storagePrefix(userId)}/machines/${machineRemoteId}/${logicalObjectKey}`,
 		bytes,
 		{
-			httpMetadata: { contentType: "application/octet-stream" },
+			httpMetadata: { cacheControl: "no-store", contentType: "application/octet-stream" },
 			sha256: expectedChecksum.digest,
 		},
 	);
@@ -186,6 +186,7 @@ describe("ciphertext uploads", () => {
 		const reservation = (await response.json()) as ReservationResponse;
 		expect(reservation.state).toBe("pending");
 		expect(reservation.upload.headers).toEqual({
+			"Cache-Control": "no-store",
 			"Content-Length": String(bytes.byteLength),
 			"Content-Type": "application/octet-stream",
 			"If-None-Match": "*",
@@ -194,7 +195,14 @@ describe("ciphertext uploads", () => {
 		const uploadUrl = new URL(reservation.upload.url);
 		expect(uploadUrl.host).toBe("0123456789abcdef0123456789abcdef.r2.cloudflarestorage.com");
 		expect(uploadUrl.searchParams.get("X-Amz-SignedHeaders")?.split(";")).toEqual(
-			expect.arrayContaining(["content-length", "content-type", "host", "if-none-match", "x-amz-checksum-sha256"]),
+			expect.arrayContaining([
+				"cache-control",
+				"content-length",
+				"content-type",
+				"host",
+				"if-none-match",
+				"x-amz-checksum-sha256",
+			]),
 		);
 		expect(reservation.upload.url).not.toContain(linked.account.id);
 
@@ -502,6 +510,31 @@ describe("ciphertext uploads", () => {
 		expect(
 			await env.DB.prepare("SELECT used_bytes, reserved_bytes FROM users WHERE id = ?").bind(linked.account.id).first(),
 		).toEqual({ reserved_bytes: 3, used_bytes: 0 });
+	});
+
+	it("finalizes an exact S3 upload when the Workers binding omits its SHA-256", async () => {
+		mockGitHubUsers({ "github-token": { id: 42_424, login: "octocat" } });
+		const linked = await exchange();
+		const machineRemoteId = await createMachine(linked.accessToken);
+		const logicalObjectKey = "claude/s3-checksum.age";
+		const bytes = new Uint8Array([1, 2, 3]);
+		const response = await reserve(linked.accessToken, {
+			bytes,
+			idempotencyKey: "s3-checksum",
+			logicalObjectKey,
+			machineRemoteId,
+		});
+		const reservation = (await response.json()) as ReservationResponse;
+		const key = `users/${await storagePrefix(linked.account.id)}/machines/${machineRemoteId}/${logicalObjectKey}`;
+		const object = await env.ARCHIVE_BUCKET.put(key, bytes, {
+			httpMetadata: { cacheControl: "no-store", contentType: "application/octet-stream" },
+		});
+		if (object === null) throw new Error("test R2 PUT did not create an object");
+		expect(object.checksums.sha256).toBeUndefined();
+
+		const finalized = await finalize(linked.accessToken, reservation.reservationId);
+		expect(finalized.status).toBe(200);
+		expect(await finalized.json()).toEqual({ etag: object.etag });
 	});
 
 	it("refuses finalization when ciphertext carries extra metadata", async () => {

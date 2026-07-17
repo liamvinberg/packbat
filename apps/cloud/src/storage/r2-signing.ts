@@ -1,6 +1,7 @@
 import { AwsClient } from "aws4fetch";
 
 export const OBJECT_CONTENT_TYPE = "application/octet-stream";
+export const OBJECT_CACHE_CONTROL = "no-store";
 
 const PRESIGNED_URL_LIFETIME_SECONDS = 5 * 60;
 
@@ -53,6 +54,7 @@ export async function signUpload(
 ): Promise<SignedUpload> {
 	const expiresIn = Math.max(1, expiresAt - now);
 	const headers: Record<string, string> = {
+		"Cache-Control": OBJECT_CACHE_CONTROL,
 		"Content-Length": String(conditions.contentLength),
 		"Content-Type": OBJECT_CONTENT_TYPE,
 		"x-amz-checksum-sha256": conditions.checksumSha256,
