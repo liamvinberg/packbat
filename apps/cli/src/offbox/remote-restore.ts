@@ -1,8 +1,9 @@
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import type { PackbatConfig, RemoteConfig } from "../core/config.js";
+import { type PackbatConfig, type RemoteConfig, remoteDestination } from "../core/config.js";
 import { errorMessage, PackbatError } from "../core/errors.js";
+import { resolveHome } from "../core/home.js";
 import {
 	type ArchivedUnit,
 	type RestoreResult,
@@ -55,7 +56,7 @@ function selectRemote(config: PackbatConfig, destination: string | undefined): R
 	if (destination === undefined) {
 		return config.offbox.remotes[0];
 	}
-	const remote = config.offbox.remotes.find((candidate) => candidate.destination === destination);
+	const remote = config.offbox.remotes.find((candidate) => remoteDestination(candidate) === destination);
 	if (remote === undefined) {
 		// DRAFT copy
 		throw new PackbatError(`no configured remote has destination ${destination}`);
@@ -76,7 +77,8 @@ export async function restoreFromRemote(options: {
 	}
 	const offbox = options.config.offbox;
 	const remoteConfig = selectRemote(options.config, options.remoteDestination);
-	const remote: ArchiveRemote = createArchiveRemote(remoteConfig);
+	const home = resolveHome();
+	const remote: ArchiveRemote = createArchiveRemote(home, remoteConfig);
 	const identity = await readIdentity(options.identityPath);
 	let recipient: string;
 	try {

@@ -15,6 +15,8 @@ export interface PackbatHome {
 	defaultArchiveRoot: string;
 	/** Packbat-owned rclone config (offbox "managed" mode). */
 	rcloneConfPath: string;
+	/** Rotating Packbat Cloud credential. Always mode 0600. */
+	cloudCredentialsPath: string;
 }
 
 export function resolveHome(env: NodeJS.ProcessEnv = process.env): PackbatHome {
@@ -28,5 +30,6 @@ export function resolveHome(env: NodeJS.ProcessEnv = process.env): PackbatHome {
 		cachePath: join(root, "cache"),
 		defaultArchiveRoot: join(root, "archive"),
 		rcloneConfPath: join(root, "rclone.conf"),
+		cloudCredentialsPath: join(root, "cloud-credentials.json"),
 	};
 }

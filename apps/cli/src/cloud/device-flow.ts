@@ -2,8 +2,8 @@ import { setTimeout as wait } from "node:timers/promises";
 import { z } from "zod";
 import { PackbatError } from "../core/errors.js";
 
-const DEVICE_CODE_URL = "https://github.com/login/device/code";
-const ACCESS_TOKEN_URL = "https://github.com/login/oauth/access_token";
+const DEFAULT_DEVICE_CODE_URL = "https://github.com/login/device/code";
+const DEFAULT_ACCESS_TOKEN_URL = "https://github.com/login/oauth/access_token";
 const DEVICE_GRANT_TYPE = "urn:ietf:params:oauth:grant-type:device_code";
 const MAX_NETWORK_BACKOFF_SECONDS = 60;
 
@@ -63,7 +63,8 @@ async function responseJson(response: Response, operation: string): Promise<unkn
 }
 
 export async function requestGitHubDeviceCode(clientId: string, signal?: AbortSignal): Promise<GitHubDeviceCode> {
-	const response = await fetch(DEVICE_CODE_URL, {
+	const deviceCodeUrl = process.env.PACKBAT_GITHUB_DEVICE_CODE_URL?.trim() || DEFAULT_DEVICE_CODE_URL;
+	const response = await fetch(deviceCodeUrl, {
 		body: formBody({ client_id: clientId }),
 		headers: {
 			Accept: "application/json",
@@ -118,12 +119,13 @@ async function waitForNextPoll(
 }
 
 export async function pollGitHubDeviceFlow(options: PollGitHubDeviceFlowOptions): Promise<string> {
+	const accessTokenUrl = process.env.PACKBAT_GITHUB_ACCESS_TOKEN_URL?.trim() || DEFAULT_ACCESS_TOKEN_URL;
 	let intervalSeconds = options.deviceCode.intervalSeconds;
 	for (;;) {
 		await waitForNextPoll(options.deviceCode.expiresAt, intervalSeconds, options.signal);
 		let response: Response;
 		try {
-			response = await fetch(ACCESS_TOKEN_URL, {
+			response = await fetch(accessTokenUrl, {
 				body: formBody({
 					client_id: options.clientId,
 					device_code: options.deviceCode.deviceCode,

@@ -7,7 +7,8 @@ import { join } from "node:path";
 import * as zlib from "node:zlib";
 import type { HarnessId } from "../adapters/adapter.js";
 import { adapters, unsupportedStores } from "../adapters/registry.js";
-import { type PackbatConfig, type RemoteConfig, remoteStatePath } from "../core/config.js";
+import { cloudBillingStatus } from "../cloud/client.js";
+import { type PackbatConfig, type RemoteConfig, remoteDestination, remoteStatePath } from "../core/config.js";
 import { commandOnPath } from "../core/exec.js";
 import { isEnoent, pathExists } from "../core/fs.js";
 import type { PackbatHome } from "../core/home.js";
@@ -721,7 +722,8 @@ function compressionFact(): Fact {
 }
 
 async function checkRemoteOffbox(context: DoctorContext, remote: RemoteConfig): Promise<Fact> {
-	const prefix = `${remote.destination} · `; // DRAFT copy
+	const destination = remoteDestination(remote);
+	const prefix = `${destination} · `; // DRAFT copy
 	const path = join(remoteStatePath(context.home, remote), "last-success.json");
 	let value: unknown;
 	try {
@@ -744,44 +746,87 @@ async function checkRemoteOffbox(context: DoctorContext, remote: RemoteConfig): 
 	return elapsed < windowMs(context)
 		? fact("offbox", "ok", `${prefix}last off-box success ${formatAge(elapsed)}`, {
 				finishedAt,
-				destination: remote.destination,
+				destination,
 			})
 		: fact("offbox", "problem", `${prefix}last off-box success ${formatAge(elapsed)}`, {
 				finishedAt,
-				destination: remote.destination,
+				destination,
 			});
 }
 
 async function checkRemoteOAuth(context: DoctorContext, remote: RemoteConfig): Promise<Fact | null> {
 	const probe = await probeOAuthRemote(context.home, remote);
-	const prefix = `${remote.destination} · `;
+	const destination = remoteDestination(remote);
+	const prefix = `${destination} · `;
 	switch (probe.status) {
 		case "not-oauth":
 			return null;
 		case "ok":
 			return fact("offbox-auth", "ok", `${prefix}${probe.provider} authorization is valid`, {
-				destination: remote.destination,
+				destination,
 				provider: probe.provider,
 			});
 		case "reauthenticate":
 			return fact("offbox-auth", "problem", `${prefix}${probe.provider} authorization needs to be renewed`, {
-				destination: remote.destination,
+				destination,
 				provider: probe.provider,
 				errorClass: probe.errorClass,
 				remedy: "reauthenticate",
 			});
 		case "repair-client":
 			return fact("offbox-auth", "problem", `${prefix}${probe.provider} client configuration needs repair`, {
-				destination: remote.destination,
+				destination,
 				provider: probe.provider,
 				errorClass: probe.errorClass,
 				remedy: "repair-client",
 			});
 		case "unclassified":
 			return fact("offbox-auth", "info", `${prefix}${probe.provider} authorization could not be classified`, {
-				destination: remote.destination,
+				destination,
 				provider: probe.provider,
 			});
+	}
+}
+
+function decimalGigabytes(bytes: number): string {
+	return `${(bytes / 1_000_000_000).toFixed(bytes < 1_000_000_000 ? 2 : 1)} GB`;
+}
+
+async function checkCloudEntitlement(context: DoctorContext): Promise<Fact> {
+	try {
+		const status = await cloudBillingStatus(context.home);
+		const usage = `${decimalGigabytes(status.usedBytes + status.reservedBytes)} / ${decimalGigabytes(status.quotaBytes)}`;
+		const data = {
+			billingStarted: status.billingStarted,
+			canRestore: status.canRestore,
+			canUpload: status.canUpload,
+			graceEndsAt: status.graceEndsAt,
+			quotaBytes: status.quotaBytes,
+			reservedBytes: status.reservedBytes,
+			state: status.state,
+			usedBytes: status.usedBytes,
+		};
+		if (status.state === "grace") {
+			return fact(
+				"cloud",
+				"problem",
+				`Packbat Cloud · uploads frozen · restore before ${status.graceEndsAt ?? "the grace deadline"} · ${usage}`,
+				data,
+			);
+		}
+		if (status.state !== "active" || !status.canUpload) {
+			return fact("cloud", "problem", `Packbat Cloud · subscription inactive · uploads frozen · ${usage}`, data);
+		}
+		if (status.usedBytes + status.reservedBytes >= status.quotaBytes) {
+			return fact("cloud", "problem", `Packbat Cloud · quota full · uploads frozen · ${usage}`, data);
+		}
+		return fact("cloud", "ok", `Packbat Cloud · active · ${usage}`, data);
+	} catch (error) {
+		return fact(
+			"cloud",
+			"problem",
+			`Packbat Cloud · status unavailable: ${error instanceof Error ? error.message : String(error)}`,
+		);
 	}
 }
 
@@ -791,11 +836,12 @@ export async function checkOffbox(context: DoctorContext, probeAuthorization = f
 	}
 	const remoteFacts = await Promise.all(
 		context.config.offbox.remotes.map(async (remote) => {
-			const [authorization, freshness] = await Promise.all([
-				probeAuthorization ? checkRemoteOAuth(context, remote) : null,
+			const [authorization, freshness, cloud] = await Promise.all([
+				probeAuthorization && remote.type === "rclone" ? checkRemoteOAuth(context, remote) : null,
 				checkRemoteOffbox(context, remote),
+				remote.type === "cloud" ? checkCloudEntitlement(context) : null,
 			]);
-			return authorization === null ? [freshness] : [authorization, freshness];
+			return [cloud, authorization, freshness].filter((item): item is Fact => item !== null);
 		}),
 	);
 	return remoteFacts.flat();

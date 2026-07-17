@@ -1,4 +1,5 @@
 import { readFileSync } from "node:fs";
+import { runCloud } from "./commands/cloud.js";
 import { runDoctor } from "./commands/doctor.js";
 import { runDropboxOAuth } from "./commands/dropbox-oauth.js";
 import { runInit } from "./commands/init.js";
@@ -32,6 +33,7 @@ Run \`packbat <command> --help\` for command options.
 
 const commands: Record<string, (argv: string[]) => Promise<number>> = {
 	"_dropbox-oauth": runDropboxOAuth,
+	cloud: runCloud,
 	init: runInit,
 	sync: runSync,
 	doctor: runDoctor,

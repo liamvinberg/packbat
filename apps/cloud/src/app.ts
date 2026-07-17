@@ -44,6 +44,7 @@ type CloudBindings = Env &
 		AUTH_RATE_LIMITER: RateLimiter;
 		BILLING_RATE_LIMITER: RateLimiter;
 		DOWNLOAD_RATE_LIMITER: RateLimiter;
+		GITHUB_CLIENT_ID: string;
 		WEBHOOK_RATE_LIMITER: RateLimiter;
 	};
 
@@ -220,6 +221,7 @@ export function createApp() {
 	});
 
 	app.get("/healthz", (context) => context.json({ ok: true }));
+	app.get("/v1/client", (context) => context.json({ githubClientId: context.env.GITHUB_CLIENT_ID }));
 
 	app.post("/v1/auth/github/exchange", async (context) => {
 		await enforcePublicAuthRateLimit(context.env.AUTH_RATE_LIMITER, context.req.raw, "exchange");

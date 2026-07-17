@@ -2,6 +2,7 @@ import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import { isAbsolute, join } from "node:path";
 import { cancel, confirm, intro, isCancel, log, note, outro, password, select, spinner, text } from "@clack/prompts";
+import { type CloudLinkEvents, linkCloudRemote } from "../cloud/link.js";
 import { generateIdentity, identityToRecipient } from "../offbox/age.js";
 import {
 	createAwsDestination,
@@ -20,7 +21,7 @@ import { pickRcloneInstall } from "../offbox/rclone-install.js";
 import { recipientChallenge, renderRecoveryKit, writeRecoveryKit } from "../offbox/recovery-kit.js";
 import { smokeTestRemoteIndex } from "../offbox/smoke.js";
 import { previewSchedule } from "../schedule/scheduler.js";
-import { loadConfig, type OffboxConfig, type PackbatConfig } from "./config.js";
+import { loadConfig, type OffboxConfig, type PackbatConfig, remoteDestination } from "./config.js";
 import { commandOnPath } from "./exec.js";
 import { resolveHome } from "./home.js";
 import {
@@ -47,7 +48,20 @@ type OffboxSetupResult =
 	| { kind: "skipped"; config: PackbatConfig }
 	| { kind: "configured"; config: PackbatConfig; offbox: ConfiguredOffbox; identity: string };
 
-type DestinationChoice = "google-drive" | "dropbox" | "s3" | "server" | "skip";
+type DestinationChoice = "google-drive" | "dropbox" | "s3" | "server" | "skip" | "cloud";
+
+const cloudLinkEvents: CloudLinkEvents = {
+	onDeviceCode(code, verificationUri, opened) {
+		note(`${code}${opened ? "" : `\n${verificationUri}`}`, "GitHub device authorization");
+		log.info("Waiting for GitHub authorization.");
+	},
+	onCheckout(url, opened) {
+		if (!opened) note(url, "Stripe Checkout");
+	},
+	onWaitingForPayment() {
+		log.info("Waiting for Stripe Checkout.");
+	},
+};
 
 function cancelWizard(): WizardCancelled {
 	cancel("Setup cancelled.");
@@ -362,8 +376,21 @@ async function askGoogleDriveRemote(configPath: string): Promise<DestinationSetu
 	return preparation.complete(token);
 }
 
+async function askCloudInterval(): Promise<"month" | "year" | WizardCancelled> {
+	return promptResult<"month" | "year">(
+		await select<"month" | "year">({
+			message: "Packbat Cloud billing",
+			options: [
+				{ value: "month", label: "Monthly · $5" },
+				{ value: "year", label: "Annual · $50" },
+			],
+			initialValue: "month",
+		}),
+	);
+}
+
 async function askRemote(
-	choice: Exclude<DestinationChoice, "skip">,
+	choice: Exclude<DestinationChoice, "skip" | "cloud">,
 	configPath: string,
 ): Promise<DestinationSetup | WizardCancelled> {
 	switch (choice) {
@@ -448,6 +475,11 @@ async function configureOffbox(config: PackbatConfig, homePath: string): Promise
 				{ value: "s3" as const, label: "An S3 bucket" },
 				{ value: "server" as const, label: "My own server" },
 				{ value: "skip" as const, label: "Skip for now" },
+				{
+					value: "cloud" as const,
+					label: "Packbat Cloud",
+					hint: "$5/month or $50/year. 100 GB. End-to-end encrypted. We can never read your archive.", // DRAFT copy
+				},
 			],
 			initialValue: "skip",
 		}),
@@ -456,14 +488,25 @@ async function configureOffbox(config: PackbatConfig, homePath: string): Promise
 	if (choice === "skip") {
 		return { kind: "skipped", config: await writeInitConfig(home, config.archiveRoot, skippedOffboxConfig()) };
 	}
-	const rclone = await ensureRclone();
-	if (rclone === WIZARD_CANCELLED) return rclone;
-	if (!rclone) {
-		return { kind: "skipped", config: await writeInitConfig(home, config.archiveRoot, skippedOffboxConfig()) };
+	let remote: DestinationSetup;
+	if (choice === "cloud") {
+		const interval = await askCloudInterval();
+		if (interval === WIZARD_CANCELLED) return interval;
+		const cloud = await linkCloudRemote(home, interval, cloudLinkEvents);
+		remote = {
+			remote: cloud,
+			recovery: { type: "cloud", destination: "Packbat Cloud", machineRemoteId: cloud.machineRemoteId },
+		};
+	} else {
+		const rclone = await ensureRclone();
+		if (rclone === WIZARD_CANCELLED) return rclone;
+		if (!rclone) {
+			return { kind: "skipped", config: await writeInitConfig(home, config.archiveRoot, skippedOffboxConfig()) };
+		}
+		const selected = await askRemote(choice, home.rcloneConfPath);
+		if (selected === WIZARD_CANCELLED) return selected;
+		remote = selected;
 	}
-
-	const remote = await askRemote(choice, home.rcloneConfPath);
-	if (remote === WIZARD_CANCELLED) return remote;
 	const identity = await generateIdentity();
 	const recipient = await identityToRecipient(identity);
 	const kit = renderRecoveryKit({
@@ -617,7 +660,7 @@ export async function runInitWizardWorkflow(
 			try {
 				await smokeTestRemoteIndex(config, remote, configured.identity);
 			} catch (error) {
-				remoteErrors.push(`${remote.destination}: ${error instanceof Error ? error.message : String(error)}`);
+				remoteErrors.push(`${remoteDestination(remote)}: ${error instanceof Error ? error.message : String(error)}`);
 			}
 		}
 		if (remoteErrors.length === 0) {

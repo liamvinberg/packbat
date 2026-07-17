@@ -7,6 +7,7 @@ export type RecoveryKitRemote =
 	| { type: "s3-compatible"; destination: string; endpoint: string; bucket: string; prefix?: string }
 	| { type: "sftp"; destination: string; host: string; port?: number; path: string }
 	| { type: "oauth"; provider: "google-drive" | "dropbox"; destination: string }
+	| { type: "cloud"; destination: "Packbat Cloud"; machineRemoteId: string }
 	| { type: "rclone"; destination: string };
 
 export interface RecoveryKitInput {
@@ -44,6 +45,8 @@ function renderRemote(remote: RecoveryKitRemote): string {
 			].join("\n");
 		case "rclone":
 			return `type: rclone\ndestination: ${remote.destination}`;
+		case "cloud":
+			return `type: cloud\ndestination: Packbat Cloud\nmachine remote: ${remote.machineRemoteId}\ncredentials: not included`;
 	}
 }
 
@@ -63,7 +66,9 @@ export function renderRecoveryKit(input: RecoveryKitInput): string {
 	const freshMachineSetup =
 		firstRemote.type === "oauth"
 			? oauthFreshMachineSetup(firstRemote)
-			: `Configure rclone access to ${input.remotes.map((remote) => remote.destination).join(", ")}, then run:
+			: firstRemote.type === "cloud"
+				? `Run packbat cloud link on the new machine, then add machine remote ${firstRemote.machineRemoteId} to config.json for restore.\nThe recovery kit intentionally contains no Packbat Cloud credential.`
+				: `Configure rclone access to ${input.remotes.map((remote) => remote.destination).join(", ")}, then run:
 packbat init --yes --offbox remote --offbox-remote ${firstRemote.destination} --age-recipient ${input.recipient} --rclone-config default`;
 	const restoreCommands = input.remotes
 		.map(

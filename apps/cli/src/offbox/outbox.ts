@@ -1,7 +1,13 @@
 import { createHash, randomUUID } from "node:crypto";
 import { appendFile, mkdir, readdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { basename, dirname, join, relative } from "node:path";
-import { type OffboxConfig, type PackbatConfig, type RemoteConfig, remoteStatePath } from "../core/config.js";
+import {
+	type OffboxConfig,
+	type PackbatConfig,
+	type RemoteConfig,
+	remoteDestination,
+	remoteStatePath,
+} from "../core/config.js";
 import { PackbatError } from "../core/errors.js";
 import { isEnoent } from "../core/fs.js";
 import type { PackbatHome } from "../core/home.js";
@@ -22,7 +28,7 @@ interface UploadedRecord {
 	uploadedAt: string;
 	recipient: string;
 	destination: string;
-	rcloneConfig: "managed" | "default";
+	rcloneConfig: "managed" | "default" | null;
 }
 
 interface ArchiveFile {
@@ -53,7 +59,7 @@ function isUploadedRecord(value: unknown): value is UploadedRecord {
 		typeof record.uploadedAt === "string" &&
 		typeof record.recipient === "string" &&
 		typeof record.destination === "string" &&
-		(record.rcloneConfig === "managed" || record.rcloneConfig === "default")
+		(record.rcloneConfig === "managed" || record.rcloneConfig === "default" || record.rcloneConfig === null)
 	);
 }
 
@@ -173,7 +179,9 @@ async function publishRemote(
 	const indexStatePath = join(statePath, "index.json");
 	const uploaded = await readUploadedRecords(uploadedPath);
 	const previousIndex = await readIndexState(indexStatePath);
-	const remote = createArchiveRemote(remoteConfig);
+	const remote = createArchiveRemote(home, remoteConfig);
+	const destination = remoteDestination(remoteConfig);
+	const rcloneConfig = remoteConfig.type === "rclone" ? remoteConfig.rcloneConfig : null;
 	const hasPublished = uploaded.size > 0 || previousIndex !== null || (await pathExists(successPath));
 	if (!hasPublished && (await remote.indexExists(config.machine))) {
 		// DRAFT copy
@@ -187,8 +195,8 @@ async function publishRemote(
 		return (
 			previous === undefined ||
 			previous.recipient !== offbox.recipient ||
-			previous.destination !== remoteConfig.destination ||
-			previous.rcloneConfig !== remoteConfig.rcloneConfig ||
+			previous.destination !== destination ||
+			previous.rcloneConfig !== rcloneConfig ||
 			file.mtimeMs > previous.mtimeMs
 		);
 	});
@@ -200,7 +208,7 @@ async function publishRemote(
 		bytes += await encryptFile(file.absolutePath, join(outboxPath, `${file.path}.age`), offbox.recipient);
 	}
 	if (changed.length > 0) {
-		await remote.putArchiveObjects(outboxPath);
+		await remote.putArchiveObjects(config.machine, outboxPath);
 	}
 
 	const indexContents = await readFile(indexPath);
@@ -225,8 +233,8 @@ async function publishRemote(
 						mtimeMs: file.mtimeMs,
 						uploadedAt: finishedAt,
 						recipient: offbox.recipient,
-						destination: remoteConfig.destination,
-						rcloneConfig: remoteConfig.rcloneConfig,
+						destination,
+						rcloneConfig,
 					}),
 				)
 				.join("\n")}\n`,
@@ -258,7 +266,7 @@ export async function publishOffbox(
 			outcomes.push(await publishRemote(home, config, offbox, remote));
 		} catch (error) {
 			outcomes.push({
-				destination: remote.destination,
+				destination: remoteDestination(remote),
 				ok: false,
 				error: error instanceof Error ? error.message : String(error),
 			});

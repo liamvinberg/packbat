@@ -86,6 +86,20 @@ If every copy of this identity is lost, nobody can recover this archive.
 		expect(kit).not.toContain("token =");
 	});
 
+	test("records the opaque Cloud machine locator without credentials", () => {
+		const kit = renderRecoveryKit({
+			identity: "AGE-SECRET-KEY-1SYNTHETICIDENTITY",
+			recipient: "age1syntheticrecipient12345678",
+			remotes: [{ type: "cloud", destination: "Packbat Cloud", machineRemoteId: "abcdefghijklmnopqrstuvwx" }],
+			createdAt: "2026-07-17T10:11:12.000Z",
+		});
+
+		expect(kit).toContain("type: cloud\ndestination: Packbat Cloud\nmachine remote: abcdefghijklmnopqrstuvwx");
+		expect(kit).toContain("The recovery kit intentionally contains no Packbat Cloud credential.");
+		expect(kit).not.toContain("access token");
+		expect(kit).not.toContain("refresh token");
+	});
+
 	test("uses the last eight recipient characters as the custody challenge", () => {
 		expect(recipientChallenge("age1syntheticrecipient12345678")).toBe("12345678");
 	});

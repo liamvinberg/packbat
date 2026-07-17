@@ -11,6 +11,7 @@ Create `apps/cloud/.dev.vars` with the following values, then run:
 
 ```text
 ACCESS_TOKEN_SECRET=<random value of at least 32 bytes>
+GITHUB_CLIENT_ID=<public client ID for the Packbat GitHub OAuth App with Device Flow enabled>
 R2_ACCOUNT_ID=<Cloudflare account ID>
 R2_ACCESS_KEY_ID=<bucket-scoped object read/write key>
 R2_SECRET_ACCESS_KEY=<matching secret>
@@ -102,6 +103,7 @@ stores more than the signed length, and removes every synthetic proof object.
 
 ## API
 
+- `GET /v1/client` returns the public GitHub OAuth App client ID used by the CLI Device Flow. It contains no secret.
 - `POST /v1/auth/github/exchange` rate-limits before verifying a GitHub access token through `/user` and issuing
   Packbat credentials.
 - `POST /v1/auth/refresh` rate-limits before credential lookup and rotates a refresh token once.

@@ -13,6 +13,7 @@ export type OAuthProbe =
 	| { status: "unclassified"; provider: OAuthProvider };
 
 export async function probeOAuthRemote(home: PackbatHome, remote: RemoteConfig): Promise<OAuthProbe> {
+	if (remote.type !== "rclone") return { status: "not-oauth" };
 	if (remote.rcloneConfig !== "managed") return { status: "not-oauth" };
 	let section: Awaited<ReturnType<typeof readManagedRcloneRemote>>;
 	try {

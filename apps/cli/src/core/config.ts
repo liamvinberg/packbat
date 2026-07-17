@@ -14,13 +14,24 @@ const rcloneRemoteFields = {
 	rcloneConfig: z.enum(["managed", "default"]),
 } as const;
 
-const remoteSchema = z.strictObject({
+const rcloneRemoteSchema = z.strictObject({
 	type: z.literal("rclone"),
 	...rcloneRemoteFields,
 });
 
+const cloudRemoteSchema = z.strictObject({
+	type: z.literal("cloud"),
+	machineRemoteId: z.string().regex(/^[A-Za-z0-9_-]{24}$/u, "must be an opaque Packbat Cloud machine ID"),
+});
+
+const remoteSchema = z.discriminatedUnion("type", [rcloneRemoteSchema, cloudRemoteSchema]);
+
+function schemaRemoteId(remote: z.infer<typeof remoteSchema>): string {
+	return remote.type === "rclone" ? `rclone:${remote.destination}` : `cloud:${remote.machineRemoteId}`;
+}
+
 const remotesSchema = z.tuple([remoteSchema], remoteSchema).refine(
-	(remotes) => new Set(remotes.map((remote) => remote.destination)).size === remotes.length,
+	(remotes) => new Set(remotes.map(schemaRemoteId)).size === remotes.length,
 	"remote destinations must be unique", // DRAFT copy
 );
 
@@ -61,6 +72,14 @@ export type PackbatConfig = z.infer<typeof configSchema>;
 export type OffboxConfig = PackbatConfig["offbox"];
 export type RemoteConfig = Extract<OffboxConfig, { mode: "configured" }>["remotes"][number];
 
+export function remoteConfigId(remote: RemoteConfig): string {
+	return schemaRemoteId(remote);
+}
+
+export function remoteDestination(remote: RemoteConfig): string {
+	return remote.type === "rclone" ? remote.destination : "Packbat Cloud";
+}
+
 const legacyConfigSchema = z.strictObject({
 	version: z.literal(1),
 	machine: configSchema.shape.machine,
@@ -80,7 +99,9 @@ const legacyConfigSchema = z.strictObject({
 });
 
 export function remoteStateId(remote: RemoteConfig): string {
-	return createHash("sha256").update(`${remote.type}\0${remote.destination}`).digest("hex");
+	const stableIdentity =
+		remote.type === "rclone" ? `${remote.type}\0${remote.destination}` : `${remote.type}\0${remote.machineRemoteId}`;
+	return createHash("sha256").update(stableIdentity).digest("hex");
 }
 
 export function remoteStatePath(home: PackbatHome, remote: RemoteConfig): string {
