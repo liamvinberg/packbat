@@ -72,10 +72,6 @@ export type PackbatConfig = z.infer<typeof configSchema>;
 export type OffboxConfig = PackbatConfig["offbox"];
 export type RemoteConfig = Extract<OffboxConfig, { mode: "configured" }>["remotes"][number];
 
-export function remoteConfigId(remote: RemoteConfig): string {
-	return schemaRemoteId(remote);
-}
-
 export function remoteDestination(remote: RemoteConfig): string {
 	return remote.type === "rclone" ? remote.destination : "Packbat Cloud";
 }

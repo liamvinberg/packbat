@@ -1,4 +1,6 @@
+import { readFile } from "node:fs/promises";
 import packageMetadata from "../../package.json" with { type: "json" };
+import { errorMessage, PackbatError } from "../core/errors.js";
 import { writePrivateFile } from "../core/private-file.js";
 
 const RECOVERY_KIT_FORMAT = 2;
@@ -15,6 +17,37 @@ export interface RecoveryKitInput {
 	recipient: string;
 	remotes: [RecoveryKitRemote, ...RecoveryKitRemote[]];
 	createdAt: string;
+}
+
+export interface CloudRecoveryLocator {
+	machineRemoteId: string;
+	recipient: string;
+}
+
+export function parseCloudRecoveryLocator(contents: string): CloudRecoveryLocator {
+	if (!contents.startsWith("Packbat recovery kit\n")) {
+		throw new PackbatError("file is not a Packbat recovery kit");
+	}
+	const recipient = /^Age recipient\r?\n(age1[0-9a-z]+)$/mu.exec(contents)?.[1];
+	const machineRemoteIds = [
+		...contents.matchAll(/^type: cloud\r?\ndestination: Packbat Cloud\r?\nmachine remote: ([A-Za-z0-9_-]{24})$/gmu),
+	].map((match) => match[1]);
+	const machineRemoteId = machineRemoteIds[0];
+	if (recipient === undefined || machineRemoteId === undefined || machineRemoteIds.length !== 1) {
+		throw new PackbatError("recovery kit does not contain one valid Packbat Cloud locator");
+	}
+	return { machineRemoteId, recipient };
+}
+
+export async function readCloudRecoveryLocator(path: string): Promise<CloudRecoveryLocator> {
+	try {
+		return parseCloudRecoveryLocator(await readFile(path, "utf8"));
+	} catch (error) {
+		if (error instanceof PackbatError) {
+			throw error;
+		}
+		throw new PackbatError(`could not read recovery kit ${path}: ${errorMessage(error)}`);
+	}
 }
 
 function renderRemote(remote: RecoveryKitRemote): string {
@@ -67,7 +100,7 @@ export function renderRecoveryKit(input: RecoveryKitInput): string {
 		firstRemote.type === "oauth"
 			? oauthFreshMachineSetup(firstRemote)
 			: firstRemote.type === "cloud"
-				? `Run packbat cloud link on the new machine, then add machine remote ${firstRemote.machineRemoteId} to config.json for restore.\nThe recovery kit intentionally contains no Packbat Cloud credential.`
+				? "Run packbat cloud link --restore-from <kit-file> on the new machine.\nThe recovery kit intentionally contains no Packbat Cloud credential."
 				: `Configure rclone access to ${input.remotes.map((remote) => remote.destination).join(", ")}, then run:
 packbat init --yes --offbox remote --offbox-remote ${firstRemote.destination} --age-recipient ${input.recipient} --rclone-config default`;
 	const restoreCommands = input.remotes

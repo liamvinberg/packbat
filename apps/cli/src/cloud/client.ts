@@ -1,4 +1,4 @@
-import { createHash, randomUUID } from "node:crypto";
+import { createHash } from "node:crypto";
 import { createReadStream, createWriteStream } from "node:fs";
 import { mkdir, stat } from "node:fs/promises";
 import { dirname } from "node:path";
@@ -293,8 +293,4 @@ export async function downloadCloudObject(
 		Readable.fromWeb(response.body as unknown as import("node:stream/web").ReadableStream),
 		createWriteStream(destinationPath, { flags: "wx" }),
 	);
-}
-
-export function newCheckoutIdempotencyKey(): string {
-	return `link-${randomUUID()}`;
 }

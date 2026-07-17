@@ -1,13 +1,8 @@
-import { CloudApiError, createCloudPortal, revokeCloudCredential } from "../cloud/client.js";
-import { removeCloudCredentials } from "../cloud/credentials.js";
-import { type CloudLinkEvents, linkCloudRemote } from "../cloud/link.js";
-import { loadConfig, saveConfig } from "../core/config.js";
-import { PackbatError } from "../core/errors.js";
+import type { CloudLinkEvents } from "../cloud/link.js";
+import { addCloudRemote, addCloudRemoteFromRecoveryKit, openCloudBilling, unlinkCloudRemote } from "../cloud/manage.js";
 import { resolveHome } from "../core/home.js";
-import { openUrl } from "../core/open-url.js";
-import { skippedOffboxConfig } from "../core/setup.js";
 
-const USAGE = `Usage: packbat cloud link [--annual]
+const USAGE = `Usage: packbat cloud link [--annual | --restore-from <kit-file>]
        packbat cloud unlink
        packbat cloud billing
 `;
@@ -27,25 +22,25 @@ const events: CloudLinkEvents = {
 };
 
 async function link(argv: string[]): Promise<number> {
-	if (argv.length > 1 || (argv.length === 1 && argv[0] !== "--annual")) {
+	const restoreFrom = argv[0] === "--restore-from" && argv.length === 2 ? argv[1] : undefined;
+	if (!(argv.length === 0 || (argv.length === 1 && argv[0] === "--annual") || restoreFrom !== undefined)) {
 		process.stderr.write(USAGE);
 		return 1;
 	}
-	const home = resolveHome();
-	const config = loadConfig(home);
-	if (config.offbox.mode !== "configured") {
-		throw new PackbatError("off-box encryption is not configured; run `packbat init` and choose Packbat Cloud");
-	}
-	if (config.offbox.remotes.some((remote) => remote.type === "cloud")) {
+	const result =
+		restoreFrom === undefined
+			? await addCloudRemote(resolveHome(), argv[0] === "--annual" ? "year" : "month", events)
+			: await addCloudRemoteFromRecoveryKit(resolveHome(), restoreFrom, events);
+	if (result.kind === "already-linked") {
 		process.stdout.write("Packbat Cloud is already linked.\n");
-		return 0;
+	} else if (restoreFrom === undefined) {
+		process.stdout.write("Packbat Cloud linked. The next sync backfills the full local archive.\n");
+	} else {
+		process.stdout.write("Packbat Cloud restore access linked from the recovery kit.\n");
 	}
-	const remote = await linkCloudRemote(home, argv[0] === "--annual" ? "year" : "month", events);
-	saveConfig(home, {
-		...config,
-		offbox: { ...config.offbox, remotes: [...config.offbox.remotes, remote] },
-	});
-	process.stdout.write("Packbat Cloud linked. The next sync backfills the full local archive.\n");
+	process.stdout.write(
+		`Save this with the recovery kit:\ntype: cloud\ndestination: Packbat Cloud\nmachine remote: ${result.machineRemoteId}\nFresh-machine setup: packbat cloud link --restore-from <kit-file>\n`,
+	);
 	return 0;
 }
 
@@ -54,26 +49,7 @@ async function unlink(argv: string[]): Promise<number> {
 		process.stderr.write(USAGE);
 		return 1;
 	}
-	const home = resolveHome();
-	const config = loadConfig(home);
-	try {
-		await revokeCloudCredential(home);
-	} catch (error) {
-		if (!(error instanceof CloudApiError && error.status === 401)) {
-			throw error;
-		}
-	}
-	await removeCloudCredentials(home);
-	if (config.offbox.mode === "configured") {
-		const remotes = config.offbox.remotes.filter((remote) => remote.type !== "cloud");
-		const first = remotes[0];
-		saveConfig(
-			home,
-			first === undefined
-				? { ...config, offbox: skippedOffboxConfig() }
-				: { ...config, offbox: { ...config.offbox, remotes: [first, ...remotes.slice(1)] } },
-		);
-	}
+	await unlinkCloudRemote(resolveHome());
 	process.stdout.write("Packbat Cloud unlinked. Stored ciphertext remains in the Cloud account.\n");
 	return 0;
 }
@@ -83,9 +59,9 @@ async function billing(argv: string[]): Promise<number> {
 		process.stderr.write(USAGE);
 		return 1;
 	}
-	const url = await createCloudPortal(resolveHome());
-	if (!(await openUrl(url))) {
-		process.stdout.write(`Open Stripe billing: ${url}\n`);
+	const billing = await openCloudBilling(resolveHome());
+	if (!billing.opened) {
+		process.stdout.write(`Open Stripe billing: ${billing.url}\n`);
 	}
 	return 0;
 }

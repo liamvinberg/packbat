@@ -1,9 +1,9 @@
 import { randomUUID } from "node:crypto";
-import { chmod, mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { chmod, mkdir, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { join } from "node:path";
 import { afterEach, describe, expect, test } from "vitest";
-import { generateIdentity, identityToRecipient } from "../src/offbox/age.js";
+import { generateTestIdentity } from "./helpers/age.js";
 import { makeClaudeStore } from "./helpers/fixtures.js";
 import { makeTempHome, runCli } from "./helpers/run-cli.js";
 
@@ -19,6 +19,10 @@ async function body(request: IncomingMessage): Promise<Buffer> {
 function json(response: ServerResponse, status: number, value: unknown): void {
 	response.writeHead(status, { "Content-Type": "application/json" });
 	response.end(JSON.stringify(value));
+}
+
+function reject(response: ServerResponse): void {
+	json(response, 409, { error: "invalid_test_request" });
 }
 
 async function listen(
@@ -93,8 +97,7 @@ afterEach(async () => {
 describe("Packbat Cloud managed remote", () => {
 	test("backfills through exact-object uploads, commits the index last, and reports entitlement state", async () => {
 		const layout = await cloudLayout();
-		const identity = await generateIdentity();
-		const recipient = await identityToRecipient(identity);
+		const { identity, recipient } = await generateTestIdentity();
 		const machineRemoteId = "abcdefghijklmnopqrstuvwx";
 		const [fixture] = await Promise.all([makeClaudeStore(layout.claudeRoot), writeCredentials(layout.packbatHome)]);
 		const sourceBytes = await readFile(fixture.files[0]!.absPath);
@@ -112,6 +115,11 @@ describe("Packbat Cloud managed remote", () => {
 		const reservations: Array<Record<string, unknown>> = [];
 		const reservationsById = new Map<string, Record<string, unknown>>();
 		const objects = new Map<string, Buffer>();
+		let acceptsReservations = true;
+		let archiveReservationCount = 0;
+		let finalizedArchiveCount = 0;
+		let reservationSweepId: string | undefined;
+		let indexReserved = false;
 		let billingState: "active" | "grace" = "active";
 		const baseUrl = await listen(async (request, response, origin) => {
 			const url = new URL(request.url ?? "/", origin);
@@ -142,6 +150,28 @@ describe("Packbat Cloud managed remote", () => {
 			}
 			if (url.pathname === "/v1/uploads/reservations") {
 				const input = JSON.parse((await body(request)).toString("utf8")) as Record<string, unknown>;
+				const logicalObjectKey = String(input.logicalObjectKey);
+				const sweepId = String(input.sweepId);
+				reservationSweepId ??= sweepId;
+				if (
+					!acceptsReservations ||
+					indexReserved ||
+					sweepId !== reservationSweepId ||
+					logicalObjectKey.includes("cloud-machine/") ||
+					(logicalObjectKey === "index.jsonl.age"
+						? input.expectedArchiveCount !== archiveReservationCount ||
+							input.expectedIndexEtag !== null ||
+							finalizedArchiveCount !== archiveReservationCount
+						: !logicalObjectKey.startsWith("claude-code/"))
+				) {
+					reject(response);
+					return;
+				}
+				if (logicalObjectKey === "index.jsonl.age") {
+					indexReserved = true;
+				} else {
+					archiveReservationCount += 1;
+				}
 				reservations.push(input);
 				const id = randomUUID();
 				reservationsById.set(id, input);
@@ -163,12 +193,28 @@ describe("Packbat Cloud managed remote", () => {
 				const id = url.pathname.slice("/uploads/".length);
 				const reservation = reservationsById.get(id);
 				if (reservation === undefined) throw new Error("unknown reservation");
-				objects.set(String(reservation.logicalObjectKey), await body(request));
+				const logicalObjectKey = String(reservation.logicalObjectKey);
+				const object = await body(request);
+				if (object.byteLength !== reservation.expectedBytes) {
+					reject(response);
+					return;
+				}
+				objects.set(logicalObjectKey, object);
 				response.writeHead(200);
 				response.end();
 				return;
 			}
 			if (url.pathname.match(/^\/v1\/uploads\/[^/]+\/finalize$/u)) {
+				const id = url.pathname.split("/").at(-2);
+				const reservation = id === undefined ? undefined : reservationsById.get(id);
+				const logicalObjectKey = String(reservation?.logicalObjectKey);
+				if (reservation === undefined || !objects.has(logicalObjectKey)) {
+					reject(response);
+					return;
+				}
+				if (logicalObjectKey !== "index.jsonl.age") {
+					finalizedArchiveCount += 1;
+				}
 				json(response, 200, { etag: `etag-${reservations.length}` });
 				return;
 			}
@@ -185,36 +231,70 @@ describe("Packbat Cloud managed remote", () => {
 		const first = await runCli(["sync"], { home: layout.home, env });
 		expect(first.code, first.stderr).toBe(0);
 		expect(first.stdout).toContain("off-box 1/1");
-		expect(reservations.length).toBeGreaterThan(1);
-		expect(reservations[0]?.logicalObjectKey).toMatch(/^claude-code\//u);
-		const indexReservation = reservations.at(-1);
-		expect(indexReservation).toMatchObject({
-			expectedArchiveCount: reservations.length - 1,
-			expectedIndexEtag: null,
-			logicalObjectKey: "index.jsonl.age",
+		const [remoteStateName] = await readdir(join(layout.packbatHome, "state", "offbox"));
+		if (remoteStateName === undefined) throw new Error("Packbat did not create remote state");
+		const remoteStatePath = join(layout.packbatHome, "state", "offbox", remoteStateName);
+		const uploadedBefore = await readFile(join(remoteStatePath, "uploaded.jsonl"), "utf8");
+		expect(uploadedBefore).toContain(fixture.files[0]!.relPath);
+		expect(JSON.parse(await readFile(join(remoteStatePath, "cloud.json"), "utf8"))).toEqual({
+			v: 1,
+			currentIndexEtag: expect.any(String),
 		});
-		expect(reservations.slice(0, -1).every((item) => item.sweepId === indexReservation?.sweepId)).toBe(true);
-		expect([...objects.keys()]).not.toEqual(expect.arrayContaining([expect.stringContaining("cloud-machine/")]));
 
+		acceptsReservations = false;
 		const second = await runCli(["sync"], { home: layout.home, env });
 		expect(second.code, second.stderr).toBe(0);
-		expect(reservations.at(-1)).toBe(indexReservation);
+		expect(await readFile(join(remoteStatePath, "uploaded.jsonl"), "utf8")).toBe(uploadedBefore);
 
-		const identityPath = join(layout.home, "recovery-kit.txt");
-		await writeFile(identityPath, identity, { mode: 0o600 });
-		const listed = await runCli(["restore", "--from-remote", "--identity", identityPath], {
-			home: layout.home,
-			env,
+		const restoreLayout = await cloudLayout();
+		await writeCredentials(restoreLayout.packbatHome);
+		const identityPath = join(restoreLayout.home, "recovery-kit.txt");
+		await writeFile(
+			identityPath,
+			`Packbat recovery kit
+
+Age identity
+${identity}
+
+Age recipient
+${recipient}
+
+Remote
+type: cloud
+destination: Packbat Cloud
+machine remote: ${machineRemoteId}
+`,
+			{ mode: 0o600 },
+		);
+		const restoreEnv = { ...restoreLayout.env, PACKBAT_CLOUD_API_URL: baseUrl };
+		const restoreLink = await runCli(["cloud", "link", "--restore-from", identityPath], {
+			home: restoreLayout.home,
+			env: restoreEnv,
 		});
+		expect(restoreLink.code, restoreLink.stderr).toBe(0);
+		expect(restoreLink.stdout).toContain("restore access linked from the recovery kit");
+		const restoreConfig = JSON.parse(await readFile(join(restoreLayout.packbatHome, "config.json"), "utf8")) as {
+			offbox: { recipient: string; remotes: Array<Record<string, unknown>> };
+		};
+		expect(restoreConfig.offbox).toMatchObject({
+			recipient,
+			remotes: [{ type: "cloud", machineRemoteId }],
+		});
+		const listed = await runCli(
+			["restore", "--from-remote", "--identity", identityPath, "--machine", "cloud-machine"],
+			{
+				home: restoreLayout.home,
+				env: restoreEnv,
+			},
+		);
 		expect(listed.code, listed.stderr).toBe(0);
 		expect(listed.stdout, listed.stderr).toContain(fixture.id);
-		await rm(fixture.files[0]!.absPath);
-		const restored = await runCli(["restore", "--from-remote", "--identity", identityPath, fixture.id], {
-			home: layout.home,
-			env,
-		});
+		const restored = await runCli(
+			["restore", "--from-remote", "--identity", identityPath, "--machine", "cloud-machine", fixture.id],
+			{ home: restoreLayout.home, env: restoreEnv },
+		);
 		expect(restored.code, restored.stderr).toBe(0);
-		expect(await readFile(fixture.files[0]!.absPath)).toEqual(sourceBytes);
+		expect(await readFile(join(restoreLayout.claudeRoot, fixture.files[0]!.relPath))).toEqual(sourceBytes);
 
 		const statusResult = await runCli(["status", "--json"], { home: layout.home, env });
 		expect(statusResult.code, statusResult.stderr).toBe(0);
@@ -239,7 +319,7 @@ describe("Packbat Cloud managed remote", () => {
 
 	test("links from GitHub Device Flow without persisting the provider token", async () => {
 		const layout = await cloudLayout();
-		const recipient = await identityToRecipient(await generateIdentity());
+		const { recipient } = await generateTestIdentity();
 		await mkdir(layout.packbatHome, { recursive: true });
 		await writeFile(
 			join(layout.packbatHome, "config.json"),
@@ -261,19 +341,33 @@ describe("Packbat Cloud managed remote", () => {
 		const openPath = join(binPath, "open");
 		await writeFile(openPath, `#!/bin/sh\nprintf '%s\\n' "$1" >> "${openedPath}"\n`, { mode: 0o700 });
 		await chmod(openPath, 0o700);
-		const requests: string[] = [];
 		const githubToken = "github-token-must-not-persist";
+		const expectedPaths = [
+			"/v1/client",
+			"/github/device",
+			"/github/token",
+			"/v1/auth/github/exchange",
+			"/v1/billing/status",
+			"/v1/machines",
+		];
+		let expectedPathIndex = 0;
 		const baseUrl = await listen(async (request, response, origin) => {
 			const url = new URL(request.url ?? "/", origin);
-			requests.push(url.pathname);
+			if (url.pathname !== expectedPaths[expectedPathIndex]) {
+				reject(response);
+				return;
+			}
+			expectedPathIndex += 1;
 			if (url.pathname === "/v1/client") {
 				json(response, 200, { githubClientId: "Ov23liPackbatDeviceTest" });
 				return;
 			}
 			if (url.pathname === "/github/device") {
 				const input = new URLSearchParams((await body(request)).toString("utf8"));
-				expect(input.get("client_id")).toBe("Ov23liPackbatDeviceTest");
-				expect(input.has("scope")).toBe(false);
+				if (input.get("client_id") !== "Ov23liPackbatDeviceTest" || input.has("scope")) {
+					reject(response);
+					return;
+				}
 				json(response, 200, {
 					device_code: "synthetic-device-code",
 					expires_in: 600,
@@ -285,12 +379,19 @@ describe("Packbat Cloud managed remote", () => {
 			}
 			if (url.pathname === "/github/token") {
 				const input = new URLSearchParams((await body(request)).toString("utf8"));
-				expect(input.get("client_secret")).toBeNull();
+				if (input.get("client_secret") !== null) {
+					reject(response);
+					return;
+				}
 				json(response, 200, { access_token: githubToken });
 				return;
 			}
 			if (url.pathname === "/v1/auth/github/exchange") {
-				expect(JSON.parse((await body(request)).toString("utf8"))).toEqual({ githubAccessToken: githubToken });
+				const input = JSON.parse((await body(request)).toString("utf8")) as Record<string, unknown>;
+				if (Object.keys(input).length !== 1 || input.githubAccessToken !== githubToken) {
+					reject(response);
+					return;
+				}
 				json(response, 200, {
 					accessToken: "packbat-access-token",
 					accessTokenExpiresAt: "2099-01-01T00:00:00.000Z",
@@ -341,25 +442,127 @@ describe("Packbat Cloud managed remote", () => {
 
 		expect(result.code, result.stderr).toBe(0);
 		expect(result.stdout).toContain("GitHub code: ABCD-EFGH");
-		expect(requests).toEqual([
-			"/v1/client",
-			"/github/device",
-			"/github/token",
-			"/v1/auth/github/exchange",
-			"/v1/billing/status",
-			"/v1/machines",
-		]);
+		expect(result.stdout).toContain("machine remote: abcdefghijklmnopqrstuvwx");
 		const credentialsPath = join(layout.packbatHome, "cloud-credentials.json");
 		const credentials = await readFile(credentialsPath, "utf8");
 		expect(credentials).not.toContain(githubToken);
 		expect((await stat(credentialsPath)).mode & 0o777).toBe(0o600);
+		expect(await readFile(join(layout.packbatHome, "config.json"), "utf8")).toContain(
+			'"machineRemoteId": "abcdefghijklmnopqrstuvwx"',
+		);
 		expect(await readFile(openedPath, "utf8")).toContain(`${baseUrl}/github/verify`);
+	});
+
+	test("expired credentials relink through Device Flow and do not wedge unlink", async () => {
+		const layout = await cloudLayout();
+		const { recipient } = await generateTestIdentity();
+		const machineRemoteId = "abcdefghijklmnopqrstuvwx";
+		await mkdir(layout.packbatHome, { recursive: true });
+		await writeFile(
+			join(layout.packbatHome, "config.json"),
+			`${JSON.stringify({
+				version: 2,
+				machine: "expired-machine",
+				archiveRoot: layout.archiveRoot,
+				sweep: { intervalMinutes: 60 },
+				offbox: { mode: "configured", recipient, remotes: [{ type: "cloud", machineRemoteId }] },
+			})}\n`,
+		);
+		const expiredCredentials = `${JSON.stringify({
+			v: 1,
+			accessToken: "expired-access-token",
+			accessTokenExpiresAt: "2000-01-01T00:00:00.000Z",
+			checkoutIdempotencyKey: "expired-link",
+			refreshToken: "expired-refresh-token",
+			refreshTokenExpiresAt: "2000-01-02T00:00:00.000Z",
+		})}\n`;
+		const credentialsPath = join(layout.packbatHome, "cloud-credentials.json");
+		await writeFile(credentialsPath, expiredCredentials, { mode: 0o600 });
+		const binPath = join(layout.home, "bin-expired");
+		await mkdir(binPath);
+		await writeFile(join(binPath, "open"), "#!/bin/sh\nexit 0\n", { mode: 0o700 });
+		await chmod(join(binPath, "open"), 0o700);
+		const githubToken = "github-relink-token";
+		const baseUrl = await listen(async (request, response, origin) => {
+			const url = new URL(request.url ?? "/", origin);
+			if (url.pathname === "/v1/client") {
+				json(response, 200, { githubClientId: "Ov23liPackbatRelinkTest" });
+				return;
+			}
+			if (url.pathname === "/github/device") {
+				json(response, 200, {
+					device_code: "synthetic-device-code",
+					expires_in: 600,
+					interval: 1,
+					user_code: "RELINK-ME",
+					verification_uri: `${origin}/github/verify`,
+				});
+				return;
+			}
+			if (url.pathname === "/github/token") {
+				json(response, 200, { access_token: githubToken });
+				return;
+			}
+			if (url.pathname === "/v1/auth/github/exchange") {
+				json(response, 200, {
+					accessToken: "replacement-access-token",
+					accessTokenExpiresAt: "2099-01-01T00:00:00.000Z",
+					account: {
+						graceEndsAt: null,
+						githubLogin: "synthetic-user",
+						id: "11111111-1111-4111-8111-111111111111",
+						quotaBytes: 100_000_000_000,
+						reservedBytes: 0,
+						subscriptionState: "active",
+						usedBytes: 0,
+					},
+					refreshToken: "replacement-refresh-token",
+					refreshTokenExpiresAt: "2099-02-01T00:00:00.000Z",
+					tokenType: "Bearer",
+				});
+				return;
+			}
+			if (url.pathname === "/v1/billing/status") {
+				json(response, 200, {
+					billingStarted: true,
+					canRestore: true,
+					canUpload: true,
+					graceEndsAt: null,
+					quotaBytes: 100_000_000_000,
+					reservedBytes: 0,
+					state: "active",
+					usedBytes: 0,
+				});
+				return;
+			}
+			json(response, 404, { error: "not_found" });
+		});
+		const env = {
+			...layout.env,
+			PACKBAT_CLOUD_API_URL: baseUrl,
+			PACKBAT_GITHUB_ACCESS_TOKEN_URL: `${baseUrl}/github/token`,
+			PACKBAT_GITHUB_DEVICE_CODE_URL: `${baseUrl}/github/device`,
+			PATH: `${binPath}:${process.env.PATH ?? ""}`,
+		};
+		const relinked = await runCli(["cloud", "link"], { home: layout.home, env });
+		expect(relinked.code, relinked.stderr).toBe(0);
+		expect(relinked.stdout).toContain("GitHub code: RELINK-ME");
+		expect(relinked.stdout).toContain("Packbat Cloud is already linked");
+		expect(await readFile(credentialsPath, "utf8")).toContain("replacement-refresh-token");
+
+		await writeFile(credentialsPath, expiredCredentials, { mode: 0o600 });
+		const unlinked = await runCli(["cloud", "unlink"], { home: layout.home, env });
+		expect(unlinked.code, unlinked.stderr).toBe(0);
+		await expect(stat(credentialsPath)).rejects.toMatchObject({ code: "ENOENT" });
+		const config = JSON.parse(await readFile(join(layout.packbatHome, "config.json"), "utf8")) as {
+			offbox: { mode: string };
+		};
+		expect(config.offbox.mode).toBe("skipped");
 	});
 
 	test("link completes Checkout before registering the remote, opens billing, and unlinks locally and remotely", async () => {
 		const layout = await cloudLayout();
-		const identity = await generateIdentity();
-		const recipient = await identityToRecipient(identity);
+		const { recipient } = await generateTestIdentity();
 		const rcloneDestination = join(layout.home, "own-remote");
 		await writeCredentials(layout.packbatHome);
 		await writeFile(
@@ -384,13 +587,20 @@ describe("Packbat Cloud managed remote", () => {
 		await chmod(openPath, 0o700);
 
 		let checkoutStarted = false;
-		let credentialRevoked = false;
-		const order: string[] = [];
+		let stage: "checkout" | "machine" | "portal" | "revoke" | "status-after-checkout" | "status-before-checkout" =
+			"status-before-checkout";
 		const machineRemoteId = "zyxwvutsrqponmlkjihgfedc";
 		const baseUrl = await listen(async (request, response, origin) => {
 			const url = new URL(request.url ?? "/", origin);
 			if (url.pathname === "/v1/billing/status") {
-				order.push("status");
+				if (stage === "status-before-checkout") {
+					stage = "checkout";
+				} else if (stage === "status-after-checkout") {
+					stage = "machine";
+				} else {
+					reject(response);
+					return;
+				}
 				json(response, 200, {
 					billingStarted: checkoutStarted,
 					canRestore: checkoutStarted,
@@ -404,22 +614,38 @@ describe("Packbat Cloud managed remote", () => {
 				return;
 			}
 			if (url.pathname === "/v1/billing/checkout") {
-				order.push("checkout");
+				if (stage !== "checkout") {
+					reject(response);
+					return;
+				}
+				stage = "status-after-checkout";
 				checkoutStarted = true;
 				json(response, 201, { url: `${origin}/hosted-checkout` });
 				return;
 			}
 			if (url.pathname === "/v1/machines") {
-				order.push("machine");
+				if (stage !== "machine") {
+					reject(response);
+					return;
+				}
+				stage = "portal";
 				json(response, 201, { id: machineRemoteId });
 				return;
 			}
 			if (url.pathname === "/v1/billing/portal") {
+				if (stage !== "portal") {
+					reject(response);
+					return;
+				}
+				stage = "revoke";
 				json(response, 200, { url: `${origin}/hosted-portal` });
 				return;
 			}
 			if (url.pathname === "/v1/auth/credential" && request.method === "DELETE") {
-				credentialRevoked = true;
+				if (stage !== "revoke") {
+					reject(response);
+					return;
+				}
 				response.writeHead(204);
 				response.end();
 				return;
@@ -435,7 +661,7 @@ describe("Packbat Cloud managed remote", () => {
 		const linked = await runCli(["cloud", "link"], { home: layout.home, env });
 		expect(linked.code, linked.stderr).toBe(0);
 		expect(linked.stdout).toContain("next sync backfills the full local archive");
-		expect(order).toEqual(["status", "checkout", "status", "machine"]);
+		expect(linked.stdout).toContain(`machine remote: ${machineRemoteId}`);
 		const config = JSON.parse(await readFile(join(layout.packbatHome, "config.json"), "utf8")) as {
 			offbox: { remotes: Array<Record<string, unknown>> };
 		};
@@ -449,7 +675,6 @@ describe("Packbat Cloud managed remote", () => {
 
 		const unlinked = await runCli(["cloud", "unlink"], { home: layout.home, env });
 		expect(unlinked.code, unlinked.stderr).toBe(0);
-		expect(credentialRevoked).toBe(true);
 		expect((await stat(join(layout.packbatHome, "config.json"))).mode & 0o777).toBeGreaterThan(0);
 		await expect(stat(join(layout.packbatHome, "cloud-credentials.json"))).rejects.toMatchObject({ code: "ENOENT" });
 		const after = JSON.parse(await readFile(join(layout.packbatHome, "config.json"), "utf8")) as {

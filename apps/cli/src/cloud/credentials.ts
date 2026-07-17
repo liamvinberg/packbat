@@ -37,6 +37,8 @@ const cloudCredentialsSchema = z.strictObject({
 
 export type CloudCredentials = z.infer<typeof cloudCredentialsSchema>;
 
+export class CloudCredentialError extends PackbatError {}
+
 export function credentialsFromTokenResponse(
 	response: CloudTokenResponse,
 	checkoutIdempotencyKey: string,
@@ -57,7 +59,7 @@ export async function readCloudCredentials(home: PackbatHome): Promise<CloudCred
 		raw = await readFile(home.cloudCredentialsPath, "utf8");
 	} catch (error) {
 		if (isEnoent(error)) {
-			throw new PackbatError("Packbat Cloud is not linked; run `packbat cloud link`");
+			throw new CloudCredentialError("Packbat Cloud is not linked; run `packbat cloud link`");
 		}
 		throw error;
 	}
@@ -65,11 +67,11 @@ export async function readCloudCredentials(home: PackbatHome): Promise<CloudCred
 	try {
 		value = JSON.parse(raw);
 	} catch {
-		throw new PackbatError("Packbat Cloud credentials are invalid; run `packbat cloud link` again");
+		throw new CloudCredentialError("Packbat Cloud credentials are invalid; run `packbat cloud link` again");
 	}
 	const result = cloudCredentialsSchema.safeParse(value);
 	if (!result.success) {
-		throw new PackbatError("Packbat Cloud credentials are invalid; run `packbat cloud link` again");
+		throw new CloudCredentialError("Packbat Cloud credentials are invalid; run `packbat cloud link` again");
 	}
 	return result.data;
 }
@@ -110,9 +112,12 @@ async function parseTokenResponse(response: Response): Promise<CloudTokenRespons
 	} catch {
 		throw new PackbatError("Packbat Cloud returned an invalid credential response");
 	}
+	if (response.status === 401) {
+		throw new CloudCredentialError("Packbat Cloud authorization expired; run `packbat cloud link` again");
+	}
 	const result = cloudTokenResponseSchema.safeParse(body);
 	if (!response.ok || !result.success) {
-		throw new PackbatError("Packbat Cloud authorization expired; run `packbat cloud link` again");
+		throw new PackbatError("Packbat Cloud returned an invalid credential response");
 	}
 	return result.data;
 }
@@ -122,6 +127,9 @@ export async function refreshCloudCredentials(home: PackbatHome, apiBaseUrl: str
 		const current = await readCloudCredentials(home);
 		if (Date.parse(current.accessTokenExpiresAt) > Date.now() + 30_000) {
 			return current;
+		}
+		if (Date.parse(current.refreshTokenExpiresAt) <= Date.now()) {
+			throw new CloudCredentialError("Packbat Cloud authorization expired; run `packbat cloud link` again");
 		}
 		const response = await fetch(`${apiBaseUrl}/v1/auth/refresh`, {
 			body: JSON.stringify({ refreshToken: current.refreshToken }),
