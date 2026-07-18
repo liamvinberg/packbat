@@ -1,8 +1,8 @@
 # OAuth destinations
 
-Research date: 2026-07-14. Live validation: 2026-07-15 and 2026-07-16. Dropbox authorization ruling: 2026-07-16.
-Console labels and provider policy are current as of those dates. Credential and token material is deliberately
-excluded from this artifact.
+Research date: 2026-07-14. Live validation: 2026-07-15 and 2026-07-16. Production registration ride-along:
+2026-07-18. Dropbox authorization ruling: 2026-07-16. Console labels and provider policy are current as of those
+dates. Credential and token material is deliberately excluded from this artifact.
 
 ## Recommendation
 
@@ -64,9 +64,10 @@ The intended production shape is an External Google Auth Platform application, o
 5. Open **Clients > Create Client**, choose application type **Desktop app**, give it an identifying name, and click
    **Create**. The Desktop form needs no manually registered redirect URI
    ([Google: create Desktop credentials](https://developers.google.com/workspace/guides/create-credentials#desktop),
-   [Google: manage OAuth clients](https://support.google.com/cloud/answer/15549257)). Save the displayed client ID and
-   one-time-visible client secret in the project's secret-management system, never in this repository. Google treats
-   installed apps as public clients that cannot keep a client secret confidential
+   [Google: manage OAuth clients](https://support.google.com/cloud/answer/15549257)). The current creation dialog shows
+   the client ID but not the client secret. Open the new client's detail page and expand **Additional information >
+   Client secrets** to retrieve the secret. Save both values in the project's secret-management system, never in this
+   repository. Google treats installed apps as public clients that cannot keep a client secret confidential
    ([Google: installed-app overview](https://developers.google.com/identity/protocols/oauth2/native-app#overview)).
 6. Run the rclone local-webserver flow in the live-leg script. A Desktop client is the correct client type for a system
    browser plus loopback listener; Google recommends the loopback-IP redirect for macOS, Linux, and Windows desktop apps
@@ -76,6 +77,25 @@ The intended production shape is an External Google Auth Platform application, o
    including an offline refresh token, because `drive.file` is outside the profile-only exception. In-production apps
    are available to any Google Account and are not subject to that Testing-only seven-day expiry
    ([Google: app audience](https://support.google.com/cloud/answer/15549945#publishing-status)).
+
+### Production registration ride-along, 2026-07-18
+
+The shared release registration used a new project named **Packbat** and the generated project ID `packbat`. The
+current console begins with **Google Auth Platform not configured yet > Get started**, then presents four project
+configuration steps:
+
+1. **App Information**: app name **Packbat** and the user-support email.
+2. **Audience**: **External**.
+3. **Contact Information**: the developer-contact email.
+4. **Finish**: accept the Google API Services User Data Policy and create the configuration.
+
+The current left navigation is **Branding**, **Audience**, **Clients**, and **Data Access**. On **Branding**, the shared
+registration used `https://packbat.dev` as the homepage and `packbat.dev` as the authorized domain. The console reported
+that verification was not required while the app remained in Testing. On **Data Access > Add or Remove Scopes**, add
+only `https://www.googleapis.com/auth/drive.file`; if the scope is not offered, enable **Google Drive API** in the API
+Library first and return to Data Access. The shared client was created under **Clients > Create Client** as application
+type **Desktop app**, name **Packbat CLI**. The success dialog exposed only the client ID; the client detail page exposed
+the client secret under **Additional information > Client secrets**. No credential value is recorded here.
 
 ### Publishing unverified versus brand verification
 
@@ -147,6 +167,54 @@ sensitive/restricted-scope or security-assessment lanes
 
 The ticket's phrase “development mode covers early adopters” is correct, but “production review opens at 50” is
 incomplete. The actionable boundary is a deadline triggered at user 50, not a 50-user development cap.
+
+### Production registration ride-along, 2026-07-18
+
+The shared release app used the current **Create app** sequence: **Scoped access**, **App folder**, app name **Packbat**,
+then **Create app**. On **Settings**, register `http://localhost:53682/` under **OAuth 2 > Redirect URIs**; the console
+confirms with **OAuth URI added**. On **Permissions**, select `account_info.read`, `files.metadata.read`,
+`files.metadata.write`, `files.content.read`, `files.content.write`, `sharing.read`, and `sharing.write`, then click
+**Submit**. The App key is the only release credential; do not generate, store, or ship an App secret.
+
+**Apply for production** first refused to open until the app had an icon. The current **Branding** form contains **App
+name**, **Publisher**, **Description**, **App website**, **Privacy policy URL**, and Dropbox Chooser controls for 64x64
+and 256x256 icons. The shared app uses publisher **Packbat**, the existing site description, `https://packbat.dev`, and
+the Packbat mark as its 256x256 source. The chooser requires first uploading the image into the signed-in Dropbox
+account, then selecting it. The console persists the 256x256 source and leaves the 64x64 slot as its generated/default
+preview.
+
+After branding is saved, **Settings > Apply for production** opens **Request production status**. The current form
+requires all of the following before submission:
+
+1. Confirm **My app will need to link with more than 50 Dropbox users**.
+2. Complete **How does your app use the Dropbox API?**. **What does your app do?** and **What is your app's website?**
+   are prefilled from Branding.
+3. Supply a live **What is your app's privacy policy link?** URL.
+4. Choose one or more platforms from **Android**, **iOS**, **OS X**, **Web**, **Windows**, and **Other**.
+5. Complete **How can we try your app's Dropbox integration?** with detailed step-by-step testing instructions.
+6. Either provide third-party test credentials or confirm **My app doesn't require the user to have a non-Dropbox
+   account to use the app**.
+7. Confirm at least one testing condition: the app is freely downloadable by an external party, or the application
+   includes test credentials, a test build, screenshots, or a screencast.
+
+**Request early review** is optional and explicitly reserved for a compelling reason to review before 50 linked users.
+As of the ride-along, `packbat.dev` has no privacy-policy route, so the application was left unsubmitted rather than
+using a placeholder or broken URL.
+
+### Release credential wiring
+
+The release repository stores only these three Actions secret names:
+
+- `PACKBAT_GOOGLE_DRIVE_CLIENT_ID`
+- `PACKBAT_GOOGLE_DRIVE_CLIENT_SECRET`
+- `PACKBAT_DROPBOX_APP_KEY`
+
+Credential values travel directly from the provider console clipboard into `gh secret set`; they must not enter shell
+arguments, files, logs, screenshots transcriptions, or this document. A full rerun of publish run `29622207524` on
+2026-07-18 reran Release Please after `v0.2.1` already existed. Release Please therefore returned no newly created
+release and GitHub skipped the `publish` job. npm remained on `0.1.0`. Recovery must rerun the original failed publish
+leg while retaining its original `release_created` output, or use an explicitly reviewed workflow recovery; do not
+delete or recreate the release, weaken the release guard, or bump the version to escape the condition.
 
 ### Public-client and PKCE ruling
 
@@ -563,8 +631,8 @@ deadline, despite the nominal 500-user development maximum. That is an approval 
    data, and established weighted-unit costs for unchanged and changed sweeps.
 2. [#37](https://github.com/liamvinberg/packbat/issues/37) resolved the Dropbox production authorization decision:
    Dropbox requires S256 PKCE without an app secret for Packbat's public client.
-3. [#38](https://github.com/liamvinberg/packbat/issues/38) owns the implementation and live proof: build the
-   Packbat-owned PKCE exchange, inject its token into rclone, and validate the full lifecycle.
+3. [#38](https://github.com/liamvinberg/packbat/issues/38) resolved the implementation and live proof: the
+   Packbat-owned PKCE exchange injects its token into rclone and passed the full lifecycle.
 4. [#17](https://github.com/liamvinberg/packbat/issues/17) integrates the proven flow into the destination wizard,
    then applies for production approval before the approval threshold.
 
@@ -585,5 +653,5 @@ Issue #16 established the provider decision and handed the remaining release gat
 9. [x] #36: verify the In-production token contract, revoke and classify the live grant, reauthorize, restore retained
    bytes, and calculate weighted-unit costs. Complete brand verification before public onboarding.
 10. [x] #37: obtain Dropbox's written ruling. Public clients must use PKCE without an app secret.
-11. [ ] #38: ship and live-validate Dropbox S256 PKCE without an app secret.
+11. [x] #38: ship and live-validate Dropbox S256 PKCE without an app secret.
 12. [ ] #17: integrate the proven flow and apply before linked user 50 starts the two-week deadline.
