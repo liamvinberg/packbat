@@ -133,13 +133,51 @@ describe("packbat query", () => {
 
 		const multiple = await command(testLayout, "select 1; select 2");
 		expect(multiple.code).toBe(1);
-		expect(multiple.stderr).toContain("only one statement is allowed; semicolons inside strings are not supported");
+		expect(multiple.stderr).toContain("only one statement is allowed");
 		expect(multiple.stderr).toContain("Usage: packbat query <select-sql> [--json]\n");
 
 		const invalid = await command(testLayout, "select * from missing_table");
 		expect(invalid.code).toBe(1);
 		expect(invalid.stdout).toBe("");
 		expect(invalid.stderr).toContain("packbat: invalid query: no such table: missing_table");
+	});
+
+	test("repairs pasted queries with JSON escaped whitespace and supports semicolons inside strings", async () => {
+		const testLayout = await layout();
+		await writeTurns(testLayout, { count: 3, text: (index) => `payload; keep ${index}` });
+
+		const flattened =
+			"SELECT unit, turn,\\nsubstr(replace(text, char(10), ' '), 1, 700) AS snippet\\nFROM turns\\nWHERE lower(text) LIKE '%payload%'\\nORDER BY timestamp DESC\\nLIMIT 100";
+		const repaired = await command(testLayout, flattened);
+		expect(repaired.code, repaired.stderr).toBe(0);
+		expect(repaired.stdout.split("\n")[0]).toBe("unit\tturn\tsnippet");
+		expect(repaired.stdout).toContain("payload; keep 0");
+
+		const semicolonInString = await command(testLayout, "SELECT count(*) AS count FROM turns WHERE text LIKE '%;%'");
+		expect(semicolonInString.code, semicolonInString.stderr).toBe(0);
+		expect(semicolonInString.stdout).toBe("count\n3\n");
+
+		const trailingComment = await command(testLayout, "SELECT count(*) AS count FROM turns -- total");
+		expect(trailingComment.code, trailingComment.stderr).toBe(0);
+		expect(trailingComment.stdout).toBe("count\n3\n");
+	});
+
+	test("fails fast on unclosed quotes and hints on paste artifacts SQLite rejects", async () => {
+		const testLayout = await layout();
+		await writeTurns(testLayout, { count: 1 });
+
+		const escaped = await command(testLayout, "SELECT text FROM turns WHERE text = 'it\\'s ok'");
+		expect(escaped.code).toBe(1);
+		expect(escaped.stderr).toContain("a quote opens but never closes");
+
+		const curly = await command(testLayout, "SELECT ‘user’ FROM turns");
+		expect(curly.code).toBe(1);
+		expect(curly.stderr).toContain("packbat: invalid query:");
+		expect(curly.stderr).toContain("curly quotes");
+
+		const stray = await command(testLayout, "SELECT p\\u00e5minn FROM turns");
+		expect(stray.code).toBe(1);
+		expect(stray.stderr).toContain("backslash escapes are not SQL");
 	});
 
 	test("caps output at 200 rows in plain and JSON formats", async () => {

@@ -17,7 +17,7 @@ export function queryRetrieval(path: string, sql: string): RetrievalQueryResult 
 	const database = openReadOnly(path);
 	try {
 		try {
-			const statement = database.prepare(`SELECT * FROM ( ${sql.replace(/;\s*$/, "")} ) LIMIT 201`);
+			const statement = database.prepare(`SELECT * FROM (\n${sql}\n) LIMIT 201`);
 			const columns = statement.columns().map((column) => column.name);
 			const records = statement.all() as Record<string, unknown>[];
 			const truncated = records.length > 200;

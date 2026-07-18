@@ -1,4 +1,5 @@
 import { loadConfig } from "../core/config.js";
+import { PackbatError } from "../core/errors.js";
 import { resolveHome } from "../core/home.js";
 import { tryRetrievalLock, withRetrievalLock } from "../core/lock.js";
 import {
@@ -9,6 +10,7 @@ import {
 	retrievalDatabasePath,
 } from "../retrieval/database.js";
 import { queryRetrieval, type RetrievalQueryResult } from "../retrieval/query.js";
+import { scanSql } from "../retrieval/sql-scan.js";
 
 // DRAFT copy. Usage is pinned byte-for-byte by the retrieval contract.
 const USAGE = "Usage: packbat query <select-sql> [--json]\n";
@@ -16,6 +18,7 @@ const USAGE = "Usage: packbat query <select-sql> [--json]\n";
 interface QueryOptions {
 	sql: string;
 	json: boolean;
+	hints: string[];
 }
 
 function usageError(message: string): null {
@@ -40,11 +43,23 @@ function parseOptions(argv: string[]): QueryOptions | null {
 		}
 	}
 	if (sql === null) return usageError("a SELECT is required");
-	if (!/^\s*(select|with)\b/i.test(sql)) return usageError("query must start with SELECT or WITH");
-	if (/;[\s\S]*\S/.test(sql)) {
-		return usageError("only one statement is allowed; semicolons inside strings are not supported");
+	const scan = scanSql(sql);
+	if (!/^\s*(select|with)\b/i.test(scan.sql)) return usageError("query must start with SELECT or WITH");
+	if (scan.moreAfterSemicolon) return usageError("only one statement is allowed");
+	if (scan.unterminated) {
+		// DRAFT copy
+		return usageError(
+			"a quote opens but never closes, escape a quote inside a string by doubling it, not with a backslash",
+		);
 	}
-	return { sql, json };
+	const hints: string[] = [];
+	// DRAFT copy
+	if (scan.curlyQuote) hints.push("the query contains curly quotes, replace them with straight quotes");
+	if (scan.backslashQuote || scan.invalidBackslash) {
+		// DRAFT copy
+		hints.push("backslash escapes are not SQL, double a quote inside a string and use char(10) for a newline");
+	}
+	return { sql: scan.sql, json, hints };
 }
 
 function plainValue(value: unknown): string {
@@ -94,7 +109,15 @@ export async function runQuery(argv: string[]): Promise<number> {
 			);
 		}
 	}
-	const result = queryRetrieval(retrievalDatabasePath(home), options.sql);
+	let result: RetrievalQueryResult;
+	try {
+		result = queryRetrieval(retrievalDatabasePath(home), options.sql);
+	} catch (error) {
+		if (error instanceof PackbatError && options.hints.length > 0) {
+			throw new PackbatError(`${error.message}\n${options.hints.join("\n")}`);
+		}
+		throw error;
+	}
 	if (options.json) {
 		process.stdout.write(`${JSON.stringify({ v: 1, ...result })}\n`);
 	} else {
