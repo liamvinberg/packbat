@@ -156,8 +156,8 @@ class CloudArchiveRemote implements ArchiveRemote {
 		return this.mirrorHandles.has(machine) ? machine : this.config.machineRemoteId;
 	}
 
-	async indexExists(_machine: string): Promise<boolean> {
-		return (await cloudDownloadUrl(this.home, this.config.machineRemoteId, "index.jsonl.age")) !== null;
+	async indexExists(machine: string): Promise<boolean> {
+		return (await cloudDownloadUrl(this.home, this.machineRemoteId(machine), "index.jsonl.age")) !== null;
 	}
 
 	async putArchiveObjects(machine: string, sourceRoot: string, onObject?: (key: string) => void): Promise<void> {

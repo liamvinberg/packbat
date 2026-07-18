@@ -192,6 +192,8 @@ describe("Packbat Cloud managed remote", () => {
 		let inflight = 0;
 		let peakInflight = 0;
 		let failAfter = 5;
+		let injectRateLimit = false;
+		let rateLimitedServed = 0;
 		const baseUrl = await listen(async (request, response, origin) => {
 			const url = new URL(request.url ?? "/", origin);
 			if (url.pathname === "/v1/downloads") {
@@ -199,13 +201,21 @@ describe("Packbat Cloud managed remote", () => {
 				return;
 			}
 			if (url.pathname === "/v1/machines" && request.method === "GET") {
-				json(response, 200, { machines: [] });
+				json(response, 200, {
+					machines: [{ createdAt: "2026-07-18T00:00:00.000Z", id: "emptyRegistration0000000" }],
+				});
 				return;
 			}
 			if (url.pathname === "/v1/uploads/reservations") {
 				const input = JSON.parse((await body(request)).toString("utf8")) as { logicalObjectKey: string };
 				const key = input.logicalObjectKey;
 				if (key !== "index.jsonl.age") {
+					if (injectRateLimit) {
+						injectRateLimit = false;
+						rateLimitedServed += 1;
+						json(response, 429, { error: "rate_limited" });
+						return;
+					}
 					if (acceptedData >= failAfter) {
 						reject(response);
 						return;
@@ -257,8 +267,11 @@ describe("Packbat Cloud managed remote", () => {
 		expect(checkpointedLines.length).toBe(5);
 
 		failAfter = Number.POSITIVE_INFINITY;
+		injectRateLimit = true;
 		const second = await runCli(["sync"], { home: layout.home, env });
 		expect(second.code, `${second.stdout}${second.stderr}`).toBe(0);
+		expect(rateLimitedServed).toBe(1);
+		expect(`${first.stdout}${first.stderr}${second.stdout}${second.stderr}`).not.toContain("does not exist");
 		expect(peakInflight).toBeGreaterThanOrEqual(2);
 		const dataKeys = [...putCounts.keys()].filter((key) => key !== "index.jsonl.age");
 		expect(dataKeys.length).toBeGreaterThan(5);
@@ -267,6 +280,84 @@ describe("Packbat Cloud managed remote", () => {
 		}
 		const finalLines = (await readFile(uploadedPath, "utf8")).split("\n").filter((line) => line.trim() !== "");
 		expect(finalLines.length).toBe(dataKeys.length);
+	}, 60_000);
+
+	test("mirror skips a machine whose index is encrypted to a different key", async () => {
+		const layout = await cloudLayout();
+		await writeCredentials(layout.packbatHome);
+		const mine = await generateTestIdentity();
+		const other = await generateTestIdentity();
+		const machineRemoteId = "abcdefghijklmnopqrstuvwx";
+		const foreignId = "foreignKeyMachine0000000";
+		await writeFile(join(layout.packbatHome, "identity.txt"), `${mine.identity}\n`);
+		await writeFile(
+			join(layout.packbatHome, "config.json"),
+			`${JSON.stringify({
+				version: 2,
+				machine: "cloud-machine",
+				archiveRoot: layout.archiveRoot,
+				sweep: { intervalMinutes: 60 },
+				offbox: { mode: "configured", recipient: mine.recipient, remotes: [{ type: "cloud", machineRemoteId }] },
+			})}\n`,
+		);
+		const foreignIndex = await encryptToRecipient(other.recipient, Buffer.from("", "utf8"));
+		const baseUrl = await listen(async (request, response, origin) => {
+			const url = new URL(request.url ?? "/", origin);
+			if (url.pathname === "/v1/machines" && request.method === "GET") {
+				json(response, 200, { machines: [{ createdAt: "2026-07-18T00:00:00.000Z", id: foreignId }] });
+				return;
+			}
+			if (url.pathname === "/v1/downloads") {
+				const input = JSON.parse((await body(request)).toString("utf8")) as { machineRemoteId: string };
+				if (input.machineRemoteId === foreignId) {
+					json(response, 200, { expiresAt: "2099-01-01T00:00:00.000Z", url: `${origin}/objects/foreign-index` });
+					return;
+				}
+				json(response, 404, { error: "object_not_found" });
+				return;
+			}
+			if (url.pathname === "/objects/foreign-index") {
+				response.writeHead(200);
+				response.end(foreignIndex);
+				return;
+			}
+			if (url.pathname === "/v1/uploads/reservations") {
+				await body(request);
+				const id = randomUUID();
+				json(response, 201, {
+					reservationId: id,
+					state: "pending",
+					upload: {
+						expiresAt: "2099-01-01T00:00:00.000Z",
+						headers: { "Content-Type": "application/octet-stream" },
+						url: `${origin}/uploads/${id}`,
+					},
+				});
+				return;
+			}
+			if (url.pathname.startsWith("/uploads/") && request.method === "PUT") {
+				await body(request);
+				response.writeHead(200);
+				response.end();
+				return;
+			}
+			if (url.pathname.match(/^\/v1\/uploads\/[^/]+\/finalize$/u)) {
+				json(response, 200, { etag: "etag-1" });
+				return;
+			}
+			reject(response);
+		});
+
+		const result = await runCli(["sync"], {
+			home: layout.home,
+			env: { ...layout.env, PACKBAT_CLOUD_API_URL: baseUrl },
+		});
+		const output = `${result.stdout}${result.stderr}`;
+		expect(result.code, output).toBe(0);
+		expect(output).not.toContain("no identity matched");
+		expect(await readFile(join(layout.packbatHome, "logs", "packbat.log"), "utf8")).toContain(
+			`mirror skipped ${foreignId}: its index is encrypted to a different key`,
+		);
 	}, 60_000);
 
 	test("backfills through exact-object uploads, commits the index last, and reports entitlement state", async () => {

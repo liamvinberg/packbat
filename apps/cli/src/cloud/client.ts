@@ -239,6 +239,23 @@ function idempotencyKey(machineRemoteId: string, sweepId: string, logicalObjectK
 		.digest("base64url");
 }
 
+const RATE_LIMIT_RETRY_DELAYS_MS = [1_000, 2_000, 4_000, 8_000, 16_000];
+
+/** Rate limited calls back off and retry; reservations dedupe on their idempotency key, so a retry never double-books. */
+async function withRateLimitRetry<T>(fn: () => Promise<T>): Promise<T> {
+	for (const delay of RATE_LIMIT_RETRY_DELAYS_MS) {
+		try {
+			return await fn();
+		} catch (error) {
+			if (!(error instanceof CloudApiError && error.code === "rate_limited")) {
+				throw error;
+			}
+			await new Promise((resolve) => setTimeout(resolve, delay));
+		}
+	}
+	return await fn();
+}
+
 export async function uploadCloudObject(options: {
 	home: PackbatHome;
 	machineRemoteId: string;
@@ -249,28 +266,30 @@ export async function uploadCloudObject(options: {
 	expectedIndexEtag?: string | null;
 }): Promise<string> {
 	const [file, checksumSha256] = await Promise.all([stat(options.path), sha256(options.path)]);
-	const reservation = await parsedResponse(
-		await authenticatedFetch(options.home, "/v1/uploads/reservations", {
-			body: JSON.stringify({
-				checksumSha256,
-				expectedBytes: file.size,
-				idempotencyKey: idempotencyKey(
-					options.machineRemoteId,
-					options.sweepId,
-					options.logicalObjectKey,
+	const reservation = await withRateLimitRetry(async () =>
+		parsedResponse(
+			await authenticatedFetch(options.home, "/v1/uploads/reservations", {
+				body: JSON.stringify({
 					checksumSha256,
-				),
-				logicalObjectKey: options.logicalObjectKey,
-				machineRemoteId: options.machineRemoteId,
-				sweepId: options.sweepId,
-				...(options.expectedArchiveCount === undefined ? {} : { expectedArchiveCount: options.expectedArchiveCount }),
-				...(options.expectedIndexEtag === undefined ? {} : { expectedIndexEtag: options.expectedIndexEtag }),
+					expectedBytes: file.size,
+					idempotencyKey: idempotencyKey(
+						options.machineRemoteId,
+						options.sweepId,
+						options.logicalObjectKey,
+						checksumSha256,
+					),
+					logicalObjectKey: options.logicalObjectKey,
+					machineRemoteId: options.machineRemoteId,
+					sweepId: options.sweepId,
+					...(options.expectedArchiveCount === undefined ? {} : { expectedArchiveCount: options.expectedArchiveCount }),
+					...(options.expectedIndexEtag === undefined ? {} : { expectedIndexEtag: options.expectedIndexEtag }),
+				}),
+				headers: { "Content-Type": "application/json" },
+				method: "POST",
 			}),
-			headers: { "Content-Type": "application/json" },
-			method: "POST",
-		}),
-		uploadSchema,
-		"upload reservation",
+			uploadSchema,
+			"upload reservation",
+		),
 	);
 	if (reservation.state === "completed") {
 		return reservation.etag;
@@ -288,14 +307,16 @@ export async function uploadCloudObject(options: {
 		throw new PackbatError(`Packbat Cloud object upload failed (HTTP ${upload.status})`);
 	}
 	return (
-		await parsedResponse(
-			await authenticatedFetch(options.home, `/v1/uploads/${reservation.reservationId}/finalize`, {
-				body: "{}",
-				headers: { "Content-Type": "application/json" },
-				method: "POST",
-			}),
-			finalizeSchema,
-			"upload finalization",
+		await withRateLimitRetry(async () =>
+			parsedResponse(
+				await authenticatedFetch(options.home, `/v1/uploads/${reservation.reservationId}/finalize`, {
+					body: "{}",
+					headers: { "Content-Type": "application/json" },
+					method: "POST",
+				}),
+				finalizeSchema,
+				"upload finalization",
+			),
 		)
 	).etag;
 }
@@ -307,14 +328,16 @@ export async function cloudDownloadUrl(
 ): Promise<string | null> {
 	try {
 		return (
-			await parsedResponse(
-				await authenticatedFetch(home, "/v1/downloads", {
-					body: JSON.stringify({ logicalObjectKey, machineRemoteId }),
-					headers: { "Content-Type": "application/json" },
-					method: "POST",
-				}),
-				z.strictObject({ expiresAt: z.iso.datetime(), url: z.url() }),
-				"download authority",
+			await withRateLimitRetry(async () =>
+				parsedResponse(
+					await authenticatedFetch(home, "/v1/downloads", {
+						body: JSON.stringify({ logicalObjectKey, machineRemoteId }),
+						headers: { "Content-Type": "application/json" },
+						method: "POST",
+					}),
+					z.strictObject({ expiresAt: z.iso.datetime(), url: z.url() }),
+					"download authority",
+				),
 			)
 		).url;
 	} catch (error) {

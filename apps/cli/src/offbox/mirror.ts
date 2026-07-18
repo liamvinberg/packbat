@@ -25,6 +25,7 @@ export interface MirrorResult {
 interface MachineMirrorResult {
 	pulled: number;
 	errors: string[];
+	unreadableIndex?: boolean;
 }
 
 function temporaryPath(destination: string, label: string): string {
@@ -107,8 +108,18 @@ async function mirrorMachine(options: {
 	const encryptedIndexPath = temporaryPath(temporaryIndexPath, "ciphertext");
 	const decryptedIndexPath = temporaryPath(temporaryIndexPath, "plaintext");
 	try {
+		// A registered machine without a published index is a normal state (mid-join,
+		// or an orphaned registration); there is nothing to mirror yet.
+		if (!(await options.remote.indexExists(options.handle))) {
+			return null;
+		}
 		await options.remote.getIndex(options.handle, encryptedIndexPath);
-		const indexBytes = await decryptWithIdentity(options.identity, await readFile(encryptedIndexPath));
+		let indexBytes: Buffer;
+		try {
+			indexBytes = await decryptWithIdentity(options.identity, await readFile(encryptedIndexPath));
+		} catch {
+			return { pulled: 0, errors: [], unreadableIndex: true };
+		}
 		await writeFile(decryptedIndexPath, indexBytes);
 		const index = await readIndex(decryptedIndexPath);
 		const indexedMachines = new Set([...index.records.values()].map((record) => record.machine));
@@ -216,6 +227,10 @@ async function mirrorRemote(
 				handle,
 			});
 			if (result === null) {
+				continue;
+			}
+			if (result.unreadableIndex === true) {
+				await appendLog(home.logsPath, `mirror skipped ${handle}: its index is encrypted to a different key`); // DRAFT copy
 				continue;
 			}
 			pulled += result.pulled;
