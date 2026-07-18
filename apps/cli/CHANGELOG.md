@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.1](https://github.com/liamvinberg/packbat/compare/v0.3.0...v0.3.1) (2026-07-18)
+
+
+### Bug fixes
+
+* init wizard recovery kit flow ([d2dc8d5](https://github.com/liamvinberg/packbat/commit/d2dc8d58d757302351f41614f8ac154fb8b66bfc))
+
 ## [0.3.0](https://github.com/liamvinberg/packbat/compare/v0.2.1...v0.3.0) (2026-07-18)
 
 
