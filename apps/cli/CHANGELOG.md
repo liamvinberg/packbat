@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.5.1](https://github.com/liamvinberg/packbat/compare/v0.5.0...v0.5.1) (2026-07-18)
+
+
+### Polish
+
+* sync busy line names when the running sync started ([6a5223f](https://github.com/liamvinberg/packbat/commit/6a5223f0c5dac10a4db30663261759d22613a47d))
+
 ## [0.5.0](https://github.com/liamvinberg/packbat/compare/v0.4.0...v0.5.0) (2026-07-18)
 
 
