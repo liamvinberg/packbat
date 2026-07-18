@@ -2,8 +2,11 @@ import { runCloud } from "./commands/cloud.js";
 import { runDoctor } from "./commands/doctor.js";
 import { runDropboxOAuth } from "./commands/dropbox-oauth.js";
 import { runInit } from "./commands/init.js";
+import { runOutline } from "./commands/outline.js";
+import { runQuery } from "./commands/query.js";
 import { runRestore } from "./commands/restore.js";
 import { runSearch } from "./commands/search.js";
+import { runSessions } from "./commands/sessions.js";
 import { runShow } from "./commands/show.js";
 import { runStatus } from "./commands/status.js";
 import { runSync } from "./commands/sync.js";
@@ -22,7 +25,10 @@ Commands:
   restore   put an archived session back where its harness resumes it
   status    one-screen health summary
   search    find text across archived sessions
-  show      read one archived session
+  sessions  list archived sessions, newest first
+  outline   skim one archived session, one line per turn
+  show      read turns from one archived session
+  query     run one read-only SELECT against the search cache
 
 Options:
   -h, --help     show this help
@@ -40,7 +46,10 @@ const commands: Record<string, (argv: string[]) => Promise<number>> = {
 	restore: runRestore,
 	status: runStatus,
 	search: runSearch,
+	sessions: runSessions,
+	outline: runOutline,
 	show: runShow,
+	query: runQuery,
 };
 
 // Piping into `head` (or any consumer that closes early) must end the process
