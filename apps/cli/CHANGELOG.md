@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.1](https://github.com/liamvinberg/packbat/compare/v0.2.0...v0.2.1) (2026-07-17)
+
+
+### Bug fixes
+
+* recovery kit test reads the package version ([c6b2326](https://github.com/liamvinberg/packbat/commit/c6b2326dca3c940658d9b3127e59c69e37c73ab9))
+
 ## [0.2.0](https://github.com/liamvinberg/packbat/compare/v0.1.0...v0.2.0) (2026-07-17)
 
 
