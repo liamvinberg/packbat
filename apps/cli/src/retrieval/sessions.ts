@@ -1,5 +1,6 @@
 import type { DatabaseSync } from "node:sqlite";
 import type { HarnessId } from "../adapters/adapter.js";
+import { headOf } from "./range.js";
 
 export interface SessionFilters {
 	project: string | null;
@@ -38,8 +39,7 @@ interface SessionRow {
 }
 
 function sessionHead(text: string | null): string | null {
-	if (text === null) return null;
-	return Array.from(text.replace(/\s+/gu, " ").trim()).slice(0, 60).join("");
+	return text === null ? null : headOf(text, 60);
 }
 
 function escapeLike(value: string): string {

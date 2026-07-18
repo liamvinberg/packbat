@@ -11,6 +11,18 @@ export interface RenderedTurnRange {
 	to: number | null;
 }
 
+export interface TurnCursor {
+	from: number;
+	to: number;
+}
+
+export interface CappedTurns<T> {
+	turns: T[];
+	range: RenderedTurnRange;
+	truncated: boolean;
+	next: TurnCursor | null;
+}
+
 export class TurnRangeError extends Error {
 	override name = "TurnRangeError";
 }
@@ -62,10 +74,25 @@ export function selectTurnRange<T extends { turn: number }>(
 	};
 }
 
+function capAt<T extends { turn: number }>(
+	selected: { turns: T[]; range: RenderedTurnRange },
+	count: number,
+): CappedTurns<T> {
+	if (selected.turns.length <= count) return { ...selected, truncated: false, next: null };
+	const turns = selected.turns.slice(0, count);
+	const lastRendered = turns.at(-1)!.turn;
+	return {
+		turns,
+		range: { from: turns[0]!.turn, to: lastRendered },
+		truncated: true,
+		next: { from: lastRendered + 1, to: selected.range.to! },
+	};
+}
+
 export function capTurnsByText<T extends { turn: number; text: string }>(
 	selected: { turns: T[]; range: RenderedTurnRange },
 	all: boolean,
-): { turns: T[]; range: RenderedTurnRange; truncated: boolean; next: { from: number; to: number } | null } {
+): CappedTurns<T> {
 	if (all || selected.turns.length === 0) return { ...selected, truncated: false, next: null };
 	let chars = 0;
 	let renderedCount = selected.turns.length;
@@ -76,28 +103,16 @@ export function capTurnsByText<T extends { turn: number; text: string }>(
 			break;
 		}
 	}
-	if (renderedCount === selected.turns.length) return { ...selected, truncated: false, next: null };
-	const turns = selected.turns.slice(0, renderedCount);
-	const lastRendered = turns.at(-1)!.turn;
-	return {
-		turns,
-		range: { from: turns[0]!.turn, to: lastRendered },
-		truncated: true,
-		next: { from: lastRendered + 1, to: selected.range.to! },
-	};
+	return capAt(selected, renderedCount);
 }
 
 export function capTurnsByCount<T extends { turn: number }>(selected: {
 	turns: T[];
 	range: RenderedTurnRange;
-}): { turns: T[]; range: RenderedTurnRange; truncated: boolean; next: { from: number; to: number } | null } {
-	if (selected.turns.length <= OUTLINE_TURN_BUDGET) return { ...selected, truncated: false, next: null };
-	const turns = selected.turns.slice(0, OUTLINE_TURN_BUDGET);
-	const lastRendered = turns.at(-1)!.turn;
-	return {
-		turns,
-		range: { from: turns[0]!.turn, to: lastRendered },
-		truncated: true,
-		next: { from: lastRendered + 1, to: selected.range.to! },
-	};
+}): CappedTurns<T> {
+	return capAt(selected, OUTLINE_TURN_BUDGET);
+}
+
+export function headOf(text: string, points: number): string {
+	return Array.from(text.replace(/\s+/gu, " ").trim()).slice(0, points).join("");
 }

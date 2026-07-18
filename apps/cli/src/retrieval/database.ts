@@ -10,7 +10,7 @@ import { isEnoent } from "../core/fs.js";
 import type { PackbatHome } from "../core/home.js";
 import { getReader } from "../readers/registry.js";
 import { readArchiveCatalog } from "./catalog.js";
-import type { ArchivedRetrievalUnit, ReadTurn } from "./types.js";
+import type { ArchivedRetrievalUnit, ReadRole, ReadTurn } from "./types.js";
 
 const SCHEMA_VERSION = 1;
 
@@ -141,7 +141,7 @@ export interface SearchFilters {
 	machine: string | null;
 	project: string | null;
 	since: string | null;
-	role: "user" | "assistant" | "tool" | "summary" | "all" | null;
+	role: ReadRole | "all" | null;
 }
 
 export interface SearchHit {

@@ -3,11 +3,13 @@ import { getReader } from "../readers/registry.js";
 import {
 	capTurnsByCount,
 	capTurnsByText,
+	headOf,
 	type RenderedTurnRange,
 	type RequestedTurnRange,
 	selectTurnRange,
+	type TurnCursor,
 } from "./range.js";
-import type { ArchivedRetrievalUnit, ReadUnitResult } from "./types.js";
+import type { ArchivedRetrievalUnit, ReadRole, ReadUnitResult } from "./types.js";
 
 export interface ShowUnit {
 	key: string;
@@ -34,14 +36,14 @@ export interface ShowResult {
 		turn: number;
 		timestamp: string | null;
 		project: string | null;
-		role: "user" | "assistant" | "tool" | "summary";
+		role: ReadRole;
 		text: string;
 		filesTouched: string[];
 		commands: string[];
 	}>;
 	range: RenderedTurnRange;
 	truncated: boolean;
-	next: { from: number; to: number } | null;
+	next: TurnCursor | null;
 	warnings: ShowWarning[];
 }
 
@@ -50,14 +52,14 @@ export interface OutlineResult {
 	unit: ShowUnit;
 	turns: Array<{
 		turn: number;
-		role: "user" | "assistant" | "tool" | "summary";
+		role: ReadRole;
 		timestamp: string | null;
 		chars: number;
 		head: string;
 	}>;
 	range: RenderedTurnRange;
 	truncated: boolean;
-	next: { from: number; to: number } | null;
+	next: TurnCursor | null;
 	warnings: ShowWarning[];
 }
 
@@ -133,10 +135,6 @@ function warnings(unit: ArchivedRetrievalUnit, result: ReadUnitResult): ShowWarn
 	}));
 }
 
-function head(text: string): string {
-	return text.replace(/\s+/g, " ").trim().slice(0, 80);
-}
-
 export async function readShowUnit(
 	unit: ArchivedRetrievalUnit,
 	requestedRange: RequestedTurnRange | null = null,
@@ -180,7 +178,7 @@ export async function readOutlineUnit(
 				role: turn.role,
 				timestamp: turn.timestamp,
 				chars: turn.text.length,
-				head: head(turn.text),
+				head: headOf(turn.text, 80),
 			})),
 			range: selected.range,
 			truncated: selected.truncated,
