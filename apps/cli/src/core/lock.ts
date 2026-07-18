@@ -4,6 +4,9 @@ import { join } from "node:path";
 
 export type SyncLockResult<T> = { acquired: true; value: T } | { acquired: false };
 
+const RETRIEVAL_LOCK_POLL_INTERVAL_MS = 250;
+const RETRIEVAL_LOCK_WAIT_TIMEOUT_MS = 15_000;
+
 interface LockContents {
 	pid: number;
 	startedAt: string;
@@ -62,18 +65,40 @@ async function tryAcquire(path: string): Promise<boolean> {
 	return true;
 }
 
-async function withLock<T>(statePath: string, name: string, fn: () => Promise<T>): Promise<SyncLockResult<T>> {
+async function wait(milliseconds: number): Promise<void> {
+	await new Promise((resolve) => setTimeout(resolve, milliseconds));
+}
+
+async function withLock<T>(
+	statePath: string,
+	name: string,
+	fn: () => Promise<T>,
+	waitForLiveOwner: boolean,
+): Promise<SyncLockResult<T>> {
 	await mkdir(statePath, { recursive: true });
 	const path = join(statePath, `${name}.lock`);
 	let acquired = await tryAcquire(path);
 	if (!acquired) {
 		if (await lockOwnerIsAlive(path)) {
-			return { acquired: false };
-		}
-		await rm(path, { force: true });
-		acquired = await tryAcquire(path);
-		if (!acquired) {
-			return { acquired: false };
+			if (!waitForLiveOwner) return { acquired: false };
+			const deadline = Date.now() + RETRIEVAL_LOCK_WAIT_TIMEOUT_MS;
+			while (!acquired) {
+				const remaining = deadline - Date.now();
+				if (remaining <= 0) break;
+				await wait(Math.min(RETRIEVAL_LOCK_POLL_INTERVAL_MS, remaining));
+				acquired = await tryAcquire(path);
+				if (!acquired && !(await lockOwnerIsAlive(path))) {
+					await rm(path, { force: true });
+					acquired = await tryAcquire(path);
+				}
+			}
+			if (!acquired) return { acquired: false };
+		} else {
+			await rm(path, { force: true });
+			acquired = await tryAcquire(path);
+			if (!acquired) {
+				return { acquired: false };
+			}
 		}
 	}
 	try {
@@ -84,9 +109,9 @@ async function withLock<T>(statePath: string, name: string, fn: () => Promise<T>
 }
 
 export async function withSyncLock<T>(statePath: string, fn: () => Promise<T>): Promise<SyncLockResult<T>> {
-	return await withLock(statePath, "sync", fn);
+	return await withLock(statePath, "sync", fn, false);
 }
 
 export async function withRetrievalLock<T>(statePath: string, fn: () => Promise<T>): Promise<SyncLockResult<T>> {
-	return await withLock(statePath, "retrieval", fn);
+	return await withLock(statePath, "retrieval", fn, true);
 }

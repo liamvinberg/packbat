@@ -22,7 +22,13 @@ const homes: string[] = [];
 interface SearchJson {
 	v: 1;
 	query: string;
-	filters: { harness: string | null; machine: string | null; project: string | null; since: string | null };
+	filters: {
+		harness: string | null;
+		machine: string | null;
+		project: string | null;
+		since: string | null;
+		role: string | null;
+	};
 	results: Array<{
 		key: string;
 		unit: string;
@@ -35,6 +41,7 @@ interface SearchJson {
 		commands: string[];
 	}>;
 	truncated: boolean;
+	excluded: { tool: number; summary: number } | null;
 	warnings: Array<{ code: string; unit: string; source: string; line: number | null; detail: string }>;
 }
 
@@ -67,6 +74,24 @@ describe("packbat retrieval", () => {
 		expect(show.stdout).toBe("");
 		expect(show.stderr).toContain("packbat show: unknown option --wat");
 		expect(show.stderr).toContain("Usage: packbat show <unit-or-key>");
+	});
+
+	test("validates search role and repeated role and limit flags", async () => {
+		const test = await layout();
+		const expectedUsage =
+			"Usage: packbat search <query> [--role <role>] [--harness <id>] [--machine <name>] [--project <path>] [--since <RFC3339>] [--limit <n>] [--json]\n" +
+			"       packbat search --rebuild [--json]\n";
+
+		for (const [args, message] of [
+			[["search", "needle", "--role", "system"], "--role must be one of user, assistant, tool, summary, all"],
+			[["search", "needle", "--role", "user", "--role", "tool"], "--role may only be passed once"],
+			[["search", "needle", "--limit", "1", "--limit", "2"], "--limit may only be passed once"],
+		] as const) {
+			const invalid = await command(test, [...args]);
+			expect(invalid.code).toBe(1);
+			expect(invalid.stderr).toContain(message);
+			expect(invalid.stderr).toContain(expectedUsage);
+		}
 	});
 
 	test("searches Claude turns and show keeps null and empty fields stable", async () => {
@@ -121,6 +146,102 @@ describe("packbat retrieval", () => {
 			},
 			warnings: [],
 		});
+	});
+
+	test("search defaults to prose roles and reports matching excluded roles", async () => {
+		const test = await layout();
+		await writeArchivedJsonl({
+			layout: test,
+			harness: "claude-code",
+			unit: CLAUDE_ID,
+			relPath: `-synthetic/${CLAUDE_ID}.jsonl`,
+			lines: [
+				{ type: "user", message: { role: "user", content: "shared needle from user" } },
+				{
+					type: "assistant",
+					message: {
+						role: "assistant",
+						content: [{ type: "tool_use", name: "needle", input: {} }],
+					},
+				},
+			],
+		});
+
+		const plain = await command(test, ["search", "needle"]);
+		expect(plain.code, plain.stderr).toBe(0);
+		expect(plain.stdout).toContain("shared needle from user");
+		expect(plain.stdout).not.toContain("turn 1 · tool");
+		expect(plain.stdout).toContain("excluded: 1 tool · widen with --role tool or --role all\n");
+
+		const json = await command(test, ["search", "needle", "--json"]);
+		expect(json.code, json.stderr).toBe(0);
+		expect(JSON.parse(json.stdout) as SearchJson).toMatchObject({
+			filters: { harness: null, machine: null, project: null, since: null, role: null },
+			results: [{ role: "user" }],
+			excluded: { tool: 1, summary: 0 },
+		});
+	});
+
+	test("search can scope to a tool role or widen to every role", async () => {
+		const test = await layout();
+		await writeArchivedJsonl({
+			layout: test,
+			harness: "claude-code",
+			unit: CLAUDE_ID,
+			relPath: `-synthetic/${CLAUDE_ID}.jsonl`,
+			lines: [
+				{ type: "user", message: { role: "user", content: "shared needle from user" } },
+				{
+					type: "assistant",
+					message: {
+						role: "assistant",
+						content: [{ type: "tool_use", name: "needle", input: {} }],
+					},
+				},
+			],
+		});
+
+		const tool = await command(test, ["search", "needle", "--role", "tool", "--json"]);
+		expect(tool.code, tool.stderr).toBe(0);
+		expect(JSON.parse(tool.stdout) as SearchJson).toMatchObject({
+			filters: { role: "tool" },
+			results: [{ role: "tool" }],
+			excluded: null,
+		});
+
+		const all = await command(test, ["search", "needle", "--role", "all"]);
+		expect(all.code, all.stderr).toBe(0);
+		expect(all.stdout).toContain("turn 0 · user");
+		expect(all.stdout).toContain("turn 1 · tool");
+		expect(all.stdout).not.toContain("excluded:");
+	});
+
+	test("search limits results and rejects limits outside 1 through 200", async () => {
+		const test = await layout();
+		await writeArchivedJsonl({
+			layout: test,
+			harness: "claude-code",
+			unit: CLAUDE_ID,
+			relPath: `-synthetic/${CLAUDE_ID}.jsonl`,
+			lines: [
+				{ type: "user", message: { role: "user", content: "bounded needle first" } },
+				{ type: "user", message: { role: "user", content: "bounded needle second" } },
+			],
+		});
+
+		const limited = await command(test, ["search", "needle", "--limit", "1", "--json"]);
+		expect(limited.code, limited.stderr).toBe(0);
+		expect(JSON.parse(limited.stdout) as SearchJson).toMatchObject({
+			results: [expect.objectContaining({ role: "user" })],
+			truncated: true,
+		});
+
+		for (const value of ["0", "201", "junk"]) {
+			const invalid = await command(test, ["search", "needle", "--limit", value]);
+			expect(invalid.code).toBe(1);
+			expect(invalid.stdout).toBe("");
+			expect(invalid.stderr).toContain("--limit must be an integer from 1 to 200");
+		}
 	});
 
 	test("ends human search and show output with restore hints without changing JSON", async () => {
@@ -384,7 +505,7 @@ describe("packbat retrieval", () => {
 		expect(await readFile(databasePath)).toEqual(before);
 	});
 
-	test("bounds results at 50 and marks truncation", async () => {
+	test("bounds results at the default limit and marks truncation", async () => {
 		const test = await layout();
 		await writeArchivedJsonl({
 			layout: test,
@@ -398,7 +519,7 @@ describe("packbat retrieval", () => {
 			})),
 		});
 		const report = JSON.parse((await command(test, ["search", "needle", "--json"])).stdout) as SearchJson;
-		expect(report.results).toHaveLength(50);
+		expect(report.results).toHaveLength(20);
 		expect(report.truncated).toBe(true);
 	});
 
@@ -421,10 +542,48 @@ describe("packbat retrieval", () => {
 
 		const shown = await command(test, ["show", CLAUDE_ID, "--json"]);
 		expect(shown.code, shown.stderr).toBe(0);
+	});
 
+	test("search fails with the existing message after the retrieval lock wait expires", {
+		timeout: 20_000,
+	}, async () => {
+		const test = await layout();
+		const statePath = join(test.packbatHome, "state");
+		await mkdir(statePath, { recursive: true });
+		await writeFile(
+			join(statePath, "retrieval.lock"),
+			`${JSON.stringify({ pid: process.pid, startedAt: "2026-01-02T03:04:05.000Z" })}\n`,
+		);
+
+		const startedAt = Date.now();
 		const rebuilt = await command(test, ["search", "--rebuild", "--json"]);
 		expect(rebuilt.code).toBe(1);
 		expect(rebuilt.stderr).toContain("already running");
+		expect(Date.now() - startedAt).toBeGreaterThanOrEqual(14_500);
+	});
+
+	test("search waits for the retrieval writer lock to be released", async () => {
+		const test = await layout();
+		await writeArchivedJsonl({
+			layout: test,
+			harness: "claude-code",
+			unit: CLAUDE_ID,
+			relPath: `-synthetic/${CLAUDE_ID}.jsonl`,
+			lines: [{ type: "user", message: { role: "user", content: "waited needle" } }],
+		});
+		const statePath = join(test.packbatHome, "state");
+		const lockPath = join(statePath, "retrieval.lock");
+		await mkdir(statePath, { recursive: true });
+		await writeFile(lockPath, `${JSON.stringify({ pid: process.pid, startedAt: "2026-01-02T03:04:05.000Z" })}\n`);
+		const release = setTimeout(() => void rm(lockPath, { force: true }), 2_000);
+
+		try {
+			const searched = await command(test, ["search", "needle", "--json"]);
+			expect(searched.code, searched.stderr).toBe(0);
+			expect((JSON.parse(searched.stdout) as SearchJson).results).toHaveLength(1);
+		} finally {
+			clearTimeout(release);
+		}
 	});
 
 	test("excludes db-snapshot archives from retrieval until they have a reader", async () => {

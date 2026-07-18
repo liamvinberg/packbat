@@ -14,9 +14,16 @@ import {
 } from "../retrieval/database.js";
 
 // DRAFT copy. Usage is pinned byte-for-byte by the retrieval contract.
-const USAGE = `Usage: packbat search <query> [--harness <id>] [--machine <name>] [--project <path>] [--since <RFC3339>] [--json]
+const USAGE = `Usage: packbat search <query> [--role <role>] [--harness <id>] [--machine <name>] [--project <path>] [--since <RFC3339>] [--limit <n>] [--json]
        packbat search --rebuild [--json]
 `;
+
+const SEARCH_ROLES = ["user", "assistant", "tool", "summary", "all"] as const;
+type SearchRole = (typeof SEARCH_ROLES)[number];
+
+function isSearchRole(value: string): value is SearchRole {
+	return SEARCH_ROLES.some((role) => role === value);
+}
 
 interface SearchOptions {
 	query: string | null;
@@ -24,6 +31,8 @@ interface SearchOptions {
 	machine: string | null;
 	project: string | null;
 	since: string | null;
+	role: SearchRole | null;
+	limit: number | null;
 	json: boolean;
 	rebuild: boolean;
 }
@@ -69,6 +78,8 @@ function parseOptions(argv: string[]): SearchOptions | null {
 		machine: null,
 		project: null,
 		since: null,
+		role: null,
+		limit: null,
 		json: false,
 		rebuild: false,
 	};
@@ -86,6 +97,15 @@ function parseOptions(argv: string[]): SearchOptions | null {
 			if (value === null) return null;
 			if (!isHarnessId(value)) return usageError(`--harness must be one of ${HARNESS_IDS.join(", ")}`);
 			options.harness = value;
+			index += 1;
+		} else if (argument === "--role") {
+			if (options.role !== null) return usageError("--role may only be passed once");
+			const value = optionValue(argv, index, argument);
+			if (value === null) return null;
+			if (!isSearchRole(value)) {
+				return usageError(`--role must be one of ${SEARCH_ROLES.join(", ")}`);
+			}
+			options.role = value;
 			index += 1;
 		} else if (argument === "--machine") {
 			if (options.machine !== null) return usageError("--machine may only be passed once");
@@ -107,6 +127,15 @@ function parseOptions(argv: string[]): SearchOptions | null {
 			if (since === null) return usageError("--since must be RFC3339 or YYYY-MM-DD");
 			options.since = since;
 			index += 1;
+		} else if (argument === "--limit") {
+			if (options.limit !== null) return usageError("--limit may only be passed once");
+			const value = optionValue(argv, index, argument);
+			if (value === null) return null;
+			if (!/^\d+$/.test(value) || Number(value) < 1 || Number(value) > 200) {
+				return usageError("--limit must be an integer from 1 to 200");
+			}
+			options.limit = Number(value);
+			index += 1;
 		} else if (argument.startsWith("-")) {
 			return usageError(`unknown option ${argument}`);
 		} else if (options.query !== null) {
@@ -121,7 +150,9 @@ function parseOptions(argv: string[]): SearchOptions | null {
 			options.harness !== null ||
 			options.machine !== null ||
 			options.project !== null ||
-			options.since !== null
+			options.since !== null ||
+			options.role !== null ||
+			options.limit !== null
 		) {
 			return usageError("--rebuild only accepts --json");
 		}
@@ -169,12 +200,23 @@ export async function runSearch(argv: string[]): Promise<number> {
 				machine: options.machine,
 				project: options.project,
 				since: options.since,
+				role: options.role,
 			};
-			const result = searchDatabase(database, options.query!, filters);
+			const result = searchDatabase(database, options.query!, filters, options.limit ?? 20);
 			if (options.json) {
 				process.stdout.write(`${JSON.stringify({ v: 1, query: options.query, filters, ...result })}\n`);
 			} else {
 				for (const hit of result.results) printHit(hit);
+				const excluded = result.excluded;
+				if (excluded !== null) {
+					const counts = (["tool", "summary"] as const).flatMap((role) =>
+						excluded[role] === 0 ? [] : [`${excluded[role]} ${role}`],
+					);
+					if (counts.length > 0) {
+						// DRAFT copy
+						process.stdout.write(`excluded: ${counts.join(", ")} · widen with --role tool or --role all\n`);
+					}
+				}
 				const first = result.results[0];
 				if (first !== undefined) {
 					const machineFlag = first.machine === config.machine ? "" : `--machine ${first.machine} `;

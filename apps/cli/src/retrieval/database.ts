@@ -141,6 +141,7 @@ export interface SearchFilters {
 	machine: string | null;
 	project: string | null;
 	since: string | null;
+	role: "user" | "assistant" | "tool" | "summary" | "all" | null;
 }
 
 export interface SearchHit {
@@ -160,6 +161,7 @@ export interface SearchHit {
 export interface SearchResult {
 	results: SearchHit[];
 	truncated: boolean;
+	excluded: { tool: number; summary: number } | null;
 	warnings: RetrievalWarning[];
 }
 
@@ -486,7 +488,12 @@ function snippet(text: string, query: string): string {
 	return `${leading ? "…" : ""}${points.slice(start, end).join("")}${end < points.length ? "…" : ""}`;
 }
 
-export function searchDatabase(database: DatabaseSync, query: string, filters: SearchFilters): SearchResult {
+export function searchDatabase(
+	database: DatabaseSync,
+	query: string,
+	filters: SearchFilters,
+	limit: number,
+): SearchResult {
 	const conditions = ["turns_fts MATCH ?"];
 	const parameters: Array<string> = [query];
 	if (filters.harness !== null) {
@@ -505,7 +512,16 @@ export function searchDatabase(database: DatabaseSync, query: string, filters: S
 		conditions.push("t.timestamp IS NOT NULL AND t.timestamp >= ?");
 		parameters.push(filters.since);
 	}
+	const hitConditions = [...conditions];
+	const hitParameters = [...parameters];
+	if (filters.role === null) {
+		hitConditions.push("t.role IN ('user', 'assistant')");
+	} else if (filters.role !== "all") {
+		hitConditions.push("t.role = ?");
+		hitParameters.push(filters.role);
+	}
 	let rows: HitRow[];
+	let excluded: SearchResult["excluded"] = null;
 	try {
 		rows = database
 			.prepare(`
@@ -514,18 +530,32 @@ export function searchDatabase(database: DatabaseSync, query: string, filters: S
 				FROM turns_fts
 				JOIN turns t ON t.id = turns_fts.rowid
 				JOIN units u ON u.key = t.unit
-				WHERE ${conditions.join(" AND ")}
+				WHERE ${hitConditions.join(" AND ")}
 				ORDER BY bm25(turns_fts), t.timestamp DESC, u.key ASC, t.turn ASC
-				LIMIT 51
+				LIMIT ? + 1
 			`)
-			.all(...parameters) as unknown as HitRow[];
+			.all(...hitParameters, limit) as unknown as HitRow[];
+		if (filters.role === null) {
+			const counts = database
+				.prepare(`
+					SELECT t.role, count(*) AS count
+					FROM turns_fts
+					JOIN turns t ON t.id = turns_fts.rowid
+					JOIN units u ON u.key = t.unit
+					WHERE ${conditions.join(" AND ")} AND t.role IN ('tool', 'summary')
+					GROUP BY t.role
+				`)
+				.all(...parameters) as unknown as Array<{ role: "tool" | "summary"; count: number }>;
+			excluded = { tool: 0, summary: 0 };
+			for (const count of counts) excluded[count.role] = count.count;
+		}
 	} catch (error) {
 		// DRAFT copy
 		throw new PackbatError(`invalid search query: ${error instanceof Error ? error.message : String(error)}`);
 	}
-	const truncated = rows.length > 50;
+	const truncated = rows.length > limit;
 	return {
-		results: rows.slice(0, 50).map((row) => ({
+		results: rows.slice(0, limit).map((row) => ({
 			key: row.key,
 			unit: row.unit,
 			harness: row.harness,
@@ -539,6 +569,7 @@ export function searchDatabase(database: DatabaseSync, query: string, filters: S
 			commands: JSON.parse(row.commands) as string[],
 		})),
 		truncated,
+		excluded,
 		warnings: warnings(database),
 	};
 }
