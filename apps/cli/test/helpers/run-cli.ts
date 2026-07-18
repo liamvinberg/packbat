@@ -36,6 +36,22 @@ export interface InteractiveStep {
 	reply: string | (() => string | Promise<string>);
 }
 
+export function enter(value = ""): string {
+	return `${value}\r`;
+}
+
+export function moveUp(count: number): string {
+	return `${"\u001b[A".repeat(count)}\r`;
+}
+
+export function moveDown(count: number): string {
+	return `${"\u001b[B".repeat(count)}\r`;
+}
+
+export function backspaces(count: number): string {
+	return "\u007f".repeat(count);
+}
+
 export async function runCli(args: string[], options: RunCliOptions): Promise<CliResult> {
 	return await new Promise((resolve, reject) => {
 		const child = spawn(process.execPath, [cliEntry, ...args], {

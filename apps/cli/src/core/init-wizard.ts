@@ -1,9 +1,10 @@
 import { spawn } from "node:child_process";
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { isAbsolute, join } from "node:path";
 import { cancel, confirm, intro, isCancel, log, note, outro, password, select, spinner, text } from "@clack/prompts";
-import { type CloudLinkEvents, linkCloudRemote } from "../cloud/link.js";
+import { createCloudMachine } from "../cloud/client.js";
+import { type CloudLinkEvents, ensureCloudUploadReady } from "../cloud/link.js";
 import { generateIdentity, identityToRecipient, parseIdentityFile } from "../offbox/age.js";
 import {
 	createAwsDestination,
@@ -20,8 +21,9 @@ import {
 import { discoverRclone } from "../offbox/rclone.js";
 import { pickRcloneInstall } from "../offbox/rclone-install.js";
 import {
+	parseRecoveryKitIdentity,
+	type RecoveryKitIdentity,
 	readRecoveryKitIdentity,
-	recipientChallenge,
 	renderRecoveryKit,
 	writeRecoveryKit,
 } from "../offbox/recovery-kit.js";
@@ -30,6 +32,7 @@ import { previewSchedule } from "../schedule/scheduler.js";
 import { loadConfig, type OffboxConfig, type PackbatConfig, remoteDestination } from "./config.js";
 import { errorMessage, PackbatError } from "./errors.js";
 import { commandOnPath } from "./exec.js";
+import { expandTilde } from "./fs.js";
 import { resolveHome } from "./home.js";
 import { writePrivateFile } from "./private-file.js";
 import {
@@ -305,8 +308,9 @@ async function askSftpRemote(configPath: string): Promise<DestinationSetup | Wiz
 		}),
 	);
 	if (portAnswer === WIZARD_CANCELLED) return portAnswer;
-	const keyFile = await askOptionalText("SSH key file (optional)");
-	if (keyFile === WIZARD_CANCELLED) return keyFile;
+	const keyFileAnswer = await askOptionalText("SSH key file (optional)");
+	if (keyFileAnswer === WIZARD_CANCELLED) return keyFileAnswer;
+	const keyFile = expandTilde(keyFileAnswer);
 	const remotePath = await askRequiredText("Remote path");
 	if (remotePath === WIZARD_CANCELLED) return remotePath;
 	const port = portAnswer.trim() === "" ? undefined : Number.parseInt(portAnswer.trim(), 10);
@@ -413,7 +417,9 @@ async function askRemote(
 	}
 }
 
-async function saveRecoveryKit(kit: string, homePath: string): Promise<boolean | WizardCancelled> {
+type KitDestination = { kind: "print" } | { kind: "save"; path: string };
+
+async function askKitDestination(homePath: string): Promise<KitDestination | WizardCancelled> {
 	const destination = promptResult<"save" | "print">(
 		await select<"save" | "print">({
 			message: "Recovery kit destination",
@@ -425,71 +431,125 @@ async function saveRecoveryKit(kit: string, homePath: string): Promise<boolean |
 		}),
 	);
 	if (destination === WIZARD_CANCELLED) return destination;
-	if (destination === "print") {
-		note(kit, "Recovery kit");
-		log.warn(
-			"This terminal is the only copy. Put it somewhere safe off this machine before closing, a password manager works.",
-		);
-		return true;
-	}
+	if (destination === "print") return { kind: "print" };
 
 	const defaultPath = join(homePath, "packbat-recovery-kit.txt");
-	const path = promptResult(
+	const answer = promptResult(
 		await text({
 			message: "Recovery kit path",
 			initialValue: defaultPath,
 			validate(value) {
-				const path = value?.trim();
+				const path = expandTilde(value?.trim() ?? "");
 				if (!path) return "Enter a path.";
 				return existsSync(path) ? "Path already exists. Choose another path." : undefined;
 			},
 		}),
 	);
-	if (path === WIZARD_CANCELLED) return path;
-	await writeRecoveryKit(path.trim(), kit);
-	log.success(`Saved recovery kit: ${path.trim()}`);
-	log.warn("Keep a copy off this machine, a password manager works.");
-	return true;
+	if (answer === WIZARD_CANCELLED) return answer;
+	return { kind: "save", path: expandTilde(answer.trim()) };
 }
 
-async function verifyCustody(challenge: string): Promise<boolean | WizardCancelled> {
-	for (let attempt = 0; attempt < 2; attempt += 1) {
-		const answer = promptResult(
-			await text({
-				message: "Enter the last 8 characters of the recipient from the recovery kit",
-				validate: required,
-			}),
+async function deliverRecoveryKit(
+	kit: string,
+	minted: RecoveryKitIdentity,
+	destination: KitDestination,
+): Promise<void> {
+	if (destination.kind === "print") {
+		note(kit, "Recovery kit");
+		log.warn(
+			"This terminal is the only copy. Put it somewhere safe off this machine before closing, a password manager works.",
 		);
-		if (answer === WIZARD_CANCELLED) return answer;
-		if (answer.trim() === challenge) {
-			return true;
-		}
-		if (attempt === 0) {
-			log.warn("That did not match. One try left.");
-		}
+		return;
 	}
-	return false;
+	await writeRecoveryKit(destination.path, kit);
+	const written = await readRecoveryKitIdentity(destination.path);
+	if (written.identity !== minted.identity || written.recipient !== minted.recipient) {
+		throw new PackbatError(`recovery kit at ${destination.path} did not read back correctly`); // DRAFT copy
+	}
+	log.success(`Saved and read back the recovery kit: ${destination.path}`); // DRAFT copy
+	log.warn("Keep a copy off this machine, a password manager works.");
 }
 
-async function importRecoveryIdentity(
-	configuredRecipient?: string,
-): Promise<{ identity: string; recipient: string } | WizardCancelled> {
-	const path = await askRequiredText("Recovery kit path");
-	if (path === WIZARD_CANCELLED) return path;
-	const imported = await readRecoveryKitIdentity(path);
+async function askPastedIdentity(): Promise<RecoveryKitIdentity | WizardCancelled | null> {
+	const answer = promptResult(
+		await password({
+			message: "AGE-SECRET-KEY line", // DRAFT copy
+			validate(value) {
+				return required(value) ?? singleLine(value);
+			},
+		}),
+	);
+	if (answer === WIZARD_CANCELLED) return answer;
+	try {
+		const identity = parseIdentityFile(answer.trim().toUpperCase());
+		return { identity, recipient: await identityToRecipient(identity) };
+	} catch {
+		log.warn("That is not an AGE-SECRET-KEY line from a recovery kit."); // DRAFT copy
+		return null;
+	}
+}
+
+async function askRecoveryKitFile(): Promise<RecoveryKitIdentity | WizardCancelled | null> {
+	const answer = promptResult(
+		await text({
+			message: "Recovery kit path",
+			validate(value) {
+				const path = expandTilde(value?.trim() ?? "");
+				if (!path) return "Enter a path.";
+				if (!existsSync(path)) return `No recovery kit at ${path}.`; // DRAFT copy
+				try {
+					parseRecoveryKitIdentity(readFileSync(path, "utf8"));
+					return undefined;
+				} catch (error) {
+					return errorMessage(error);
+				}
+			},
+		}),
+	);
+	if (answer === WIZARD_CANCELLED) return answer;
+	let imported: RecoveryKitIdentity;
+	try {
+		imported = await readRecoveryKitIdentity(expandTilde(answer.trim()));
+	} catch (error) {
+		log.warn(errorMessage(error));
+		return null;
+	}
 	let recipient: string;
 	try {
 		recipient = await identityToRecipient(imported.identity);
 	} catch (error) {
-		throw new PackbatError(`could not parse age identity from recovery kit: ${errorMessage(error)}`); // DRAFT copy
+		log.warn(`could not parse age identity from recovery kit: ${errorMessage(error)}`); // DRAFT copy
+		return null;
 	}
 	if (recipient !== imported.recipient) {
-		throw new PackbatError("recovery kit identity does not match its age recipient"); // DRAFT copy
-	}
-	if (configuredRecipient !== undefined && recipient !== configuredRecipient) {
-		throw new PackbatError("recovery kit identity does not match the configured age recipient"); // DRAFT copy
+		log.warn("recovery kit identity does not match its age recipient"); // DRAFT copy
+		return null;
 	}
 	return { identity: imported.identity, recipient };
+}
+
+async function importRecoveryIdentity(configuredRecipient?: string): Promise<RecoveryKitIdentity | WizardCancelled> {
+	const source = promptResult<"paste" | "file">(
+		await select<"paste" | "file">({
+			message: "Recovery kit source", // DRAFT copy
+			options: [
+				{ value: "paste" as const, label: "Paste the AGE-SECRET-KEY line" }, // DRAFT copy
+				{ value: "file" as const, label: "Read a recovery kit file" }, // DRAFT copy
+			],
+			initialValue: "paste",
+		}),
+	);
+	if (source === WIZARD_CANCELLED) return source;
+	while (true) {
+		const imported = source === "paste" ? await askPastedIdentity() : await askRecoveryKitFile();
+		if (imported === WIZARD_CANCELLED) return imported;
+		if (imported === null) continue;
+		if (configuredRecipient !== undefined && imported.recipient !== configuredRecipient) {
+			log.warn("recovery kit identity does not match the configured age recipient"); // DRAFT copy
+			continue;
+		}
+		return imported;
+	}
 }
 
 async function residentIdentityMatching(identityPath: string, recipient: string): Promise<string | null> {
@@ -536,14 +596,17 @@ async function configureOffbox(config: PackbatConfig, homePath: string): Promise
 	if (choice === "skip") {
 		return { kind: "skipped", config: await writeInitConfig(home, config.archiveRoot, skippedOffboxConfig()) };
 	}
-	let remote: DestinationSetup;
+	let createRemote: () => Promise<DestinationSetup>;
 	if (choice === "cloud") {
 		const interval = await askCloudInterval();
 		if (interval === WIZARD_CANCELLED) return interval;
-		const cloud = await linkCloudRemote(home, interval, cloudLinkEvents);
-		remote = {
-			remote: cloud,
-			recovery: { type: "cloud", destination: "Packbat Cloud", machineRemoteId: cloud.machineRemoteId },
+		await ensureCloudUploadReady(home, interval, cloudLinkEvents);
+		createRemote = async (): Promise<DestinationSetup> => {
+			const machineRemoteId = await createCloudMachine(home);
+			return {
+				remote: { type: "cloud", machineRemoteId },
+				recovery: { type: "cloud", destination: "Packbat Cloud", machineRemoteId },
+			};
 		};
 	} else {
 		const rclone = await ensureRclone();
@@ -553,7 +616,7 @@ async function configureOffbox(config: PackbatConfig, homePath: string): Promise
 		}
 		const selected = await askRemote(choice, home.rcloneConfPath);
 		if (selected === WIZARD_CANCELLED) return selected;
-		remote = selected;
+		createRemote = async () => selected;
 	}
 	const identityChoice = promptResult<"mint" | "join">(
 		await select<"mint" | "join">({
@@ -568,29 +631,26 @@ async function configureOffbox(config: PackbatConfig, homePath: string): Promise
 	if (identityChoice === WIZARD_CANCELLED) return identityChoice;
 	let identity: string;
 	let recipient: string;
+	let remote: DestinationSetup;
 	if (identityChoice === "join") {
 		const imported = await importRecoveryIdentity();
 		if (imported === WIZARD_CANCELLED) return imported;
 		({ identity, recipient } = imported);
+		remote = await createRemote();
 	} else {
 		identity = await generateIdentity();
 		recipient = await identityToRecipient(identity);
+		const destination = await askKitDestination(homePath);
+		if (destination === WIZARD_CANCELLED) return destination;
+		remote = await createRemote();
 		const kit = renderRecoveryKit({
 			identity,
 			recipient,
 			remotes: [remote.recovery],
 			createdAt: new Date().toISOString(),
 		});
-		const saved = await saveRecoveryKit(kit, homePath);
-		if (saved === WIZARD_CANCELLED) return saved;
+		await deliverRecoveryKit(kit, { identity, recipient }, destination);
 		log.warn("The recovery kit is the backup for the key kept on this machine."); // DRAFT copy
-		const custody = await verifyCustody(recipientChallenge(recipient));
-		if (custody === WIZARD_CANCELLED) return custody;
-		if (!custody) {
-			log.warn("The recovery kit was not verified. Off-box is skipped.");
-			return { kind: "skipped", config: await writeInitConfig(home, config.archiveRoot, skippedOffboxConfig()) };
-		}
-		log.success("Recovery kit verified. Packbat keeps the key on this machine for automatic restore."); // DRAFT copy
 	}
 	if (remote.configure !== undefined) {
 		await remote.configure();
@@ -638,7 +698,7 @@ export async function runInitWizardWorkflow(
 			message: "Archive root",
 			initialValue: defaultArchiveRoot,
 			validate(value) {
-				const answer = value?.trim() ?? "";
+				const answer = expandTilde(value?.trim() ?? "");
 				if (!isAbsolute(answer)) return "Use an absolute path.";
 				if (existing !== undefined && answer !== existing.archiveRoot) {
 					return `Archive root is already ${existing.archiveRoot}. Edit config.json to move it.`;
@@ -648,7 +708,7 @@ export async function runInitWizardWorkflow(
 		}),
 	);
 	if (archiveAnswer === WIZARD_CANCELLED) return 1;
-	let config = await writeInitConfig(home, archiveAnswer.trim());
+	let config = await writeInitConfig(home, expandTilde(archiveAnswer.trim()));
 
 	const scheduleOptions = await createInitScheduleOptions(home, homePath);
 	const schedule = previewSchedule(scheduleOptions);

@@ -8,7 +8,7 @@ import { afterEach, describe, expect, test } from "vitest";
 import { encryptToRecipient } from "../src/offbox/age.js";
 import { generateTestIdentity } from "./helpers/age.js";
 import { makeClaudeStore } from "./helpers/fixtures.js";
-import { makeTempHome, runCli } from "./helpers/run-cli.js";
+import { enter, makeTempHome, moveDown, runCli, runInteractiveCli } from "./helpers/run-cli.js";
 
 const homes: string[] = [];
 const servers: Array<ReturnType<typeof createServer>> = [];
@@ -118,6 +118,52 @@ afterEach(async () => {
 });
 
 describe("Packbat Cloud managed remote", () => {
+	test("cancelling the wizard before the key step registers no machine remote", async () => {
+		const layout = await cloudLayout();
+		await writeCredentials(layout.packbatHome);
+		let machinesRegistered = 0;
+		const baseUrl = await listen(async (request, response, origin) => {
+			const url = new URL(request.url ?? "/", origin);
+			if (url.pathname === "/v1/billing/status") {
+				json(response, 200, {
+					billingStarted: true,
+					canRestore: true,
+					canUpload: true,
+					graceEndsAt: null,
+					quotaBytes: 100_000_000_000,
+					reservedBytes: 0,
+					state: "active",
+					usedBytes: 0,
+				});
+				return;
+			}
+			if (url.pathname === "/v1/machines") {
+				machinesRegistered += 1;
+				json(response, 201, { id: "abcdefghijklmnopqrstuvwx" });
+				return;
+			}
+			reject(response);
+		});
+
+		const result = await runInteractiveCli(
+			["init", "--no-activate"],
+			{ home: layout.home, env: { ...layout.env, PACKBAT_CLOUD_API_URL: baseUrl } },
+			[
+				{ waitFor: "Archive root", reply: enter() },
+				{ waitFor: "Install this schedule?", reply: enter() },
+				{ waitFor: "Off-box destination", reply: moveDown(1) },
+				{ waitFor: "Packbat Cloud billing", reply: enter() },
+				{ waitFor: "Encryption key", reply: moveDown(1) },
+				{ waitFor: "Recovery kit source", reply: String.fromCharCode(3) },
+			],
+		);
+
+		expect(result.code).toBe(1);
+		expect(machinesRegistered).toBe(0);
+		expect(`${result.stdout}${result.stderr}`).toContain("Setup cancelled.");
+		expect(await readFile(join(layout.packbatHome, "config.json"), "utf8")).not.toContain("machineRemoteId");
+	});
+
 	test("backfills through exact-object uploads, commits the index last, and reports entitlement state", async () => {
 		const layout = await cloudLayout();
 		const { identity, recipient } = await generateTestIdentity();

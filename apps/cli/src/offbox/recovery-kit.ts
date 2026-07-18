@@ -163,10 +163,6 @@ If every copy of this identity is lost, nobody can recover this archive.
 `;
 }
 
-export function recipientChallenge(recipient: string): string {
-	return recipient.slice(-8);
-}
-
 export async function writeRecoveryKit(path: string, contents: string): Promise<void> {
 	await writePrivateFile(path, contents, { overwrite: false });
 }
