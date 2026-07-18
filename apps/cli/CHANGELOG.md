@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.5.0](https://github.com/liamvinberg/packbat/compare/v0.4.0...v0.5.0) (2026-07-18)
+
+
+### Features
+
+* add SQL scan to repair paste artifacts and improve error hints ([de6ab91](https://github.com/liamvinberg/packbat/commit/de6ab91400df75dd592419a23aec2135187a1239))
+
+
+### Bug fixes
+
+* mirror skip classes and rate limit backoff ([a7a0f36](https://github.com/liamvinberg/packbat/commit/a7a0f3612b46d1964ff8ff19ce03cf4fae28b380))
+
 ## [0.4.0](https://github.com/liamvinberg/packbat/compare/v0.3.2...v0.4.0) (2026-07-18)
 
 
