@@ -407,7 +407,7 @@ describe("packbat sync", () => {
 		const result = await runCli(["sync"], { home: layout.home, env: layout.env });
 
 		expect(result.code).toBe(0);
-		expect(result.stdout).toContain("already running");
+		expect(result.stdout).toContain("sync already running, started at");
 		await expect(stat(layout.archiveRoot)).rejects.toMatchObject({ code: "ENOENT" });
 		expect(await stat(lockPath)).toBeDefined();
 	});

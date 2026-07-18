@@ -3,7 +3,7 @@ import { sweep } from "../core/archive.js";
 import { assertZstdSupport } from "../core/compress.js";
 import { loadConfig, type PackbatConfig } from "../core/config.js";
 import { type PackbatHome, resolveHome } from "../core/home.js";
-import { withRetrievalLock, withSyncLock } from "../core/lock.js";
+import { lockHolderStartTime, withRetrievalLock, withSyncLock } from "../core/lock.js";
 import { appendLog } from "../core/log.js";
 import { writeRunStamps } from "../core/stamps.js";
 import { mirrorOffbox, type RemoteMirrorOutcome } from "../offbox/mirror.js";
@@ -184,7 +184,12 @@ export async function runSync(argv: string[], output: SyncOutputOptions = {}): P
 	});
 	if (!locked.acquired) {
 		output.onBusy?.();
-		reportSummary("sync already running", output);
+		const startedAt = await lockHolderStartTime(home.statePath, "sync");
+		// DRAFT copy
+		reportSummary(
+			startedAt === null ? "sync already running" : `sync already running, started at ${startedAt}`,
+			output,
+		);
 		return 0;
 	}
 	return locked.value;

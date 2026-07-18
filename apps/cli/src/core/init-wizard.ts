@@ -34,7 +34,7 @@ import { errorMessage, PackbatError } from "./errors.js";
 import { commandOnPath } from "./exec.js";
 import { expandTilde } from "./fs.js";
 import { resolveHome } from "./home.js";
-import { readLockHolder } from "./lock.js";
+import { lockHolderStartTime } from "./lock.js";
 import { writePrivateFile } from "./private-file.js";
 import {
 	createInitScheduleOptions,
@@ -662,10 +662,8 @@ async function configureOffbox(config: PackbatConfig, homePath: string): Promise
 }
 
 async function busySyncMessage(statePath: string): Promise<string> {
-	const holder = await readLockHolder(statePath, "sync");
-	const started = holder === null ? Number.NaN : new Date(holder.startedAt).getTime();
-	if (Number.isNaN(started)) return "Waiting for the running sync";
-	const time = new Date(started).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
+	const time = await lockHolderStartTime(statePath, "sync");
+	if (time === null) return "Waiting for the running sync";
 	return `Waiting for the sync that started at ${time} to finish`; // DRAFT copy
 }
 

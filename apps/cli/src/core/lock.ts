@@ -136,3 +136,11 @@ export async function withRetrievalLock<T>(statePath: string, fn: () => Promise<
 export async function tryRetrievalLock<T>(statePath: string, fn: () => Promise<T>): Promise<SyncLockResult<T>> {
 	return await withLock(statePath, "retrieval", fn, false);
 }
+
+/** Local wall-clock start time of the lock holder, or null when there is no readable holder. */
+export async function lockHolderStartTime(statePath: string, name: string): Promise<string | null> {
+	const holder = await readLockHolder(statePath, name);
+	const started = holder === null ? Number.NaN : new Date(holder.startedAt).getTime();
+	if (Number.isNaN(started)) return null;
+	return new Date(started).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
+}
