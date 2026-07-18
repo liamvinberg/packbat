@@ -671,7 +671,12 @@ async function busySyncMessage(statePath: string): Promise<string> {
 
 export interface InitWizardActions {
 	doctor: () => Promise<number>;
-	sync: (output: { writeSummary: false; onSummary: (summary: string) => void; onBusy: () => void }) => Promise<number>;
+	sync: (output: {
+		writeSummary: false;
+		onSummary: (summary: string) => void;
+		onBusy: () => void;
+		onOffboxProgress: (destination: string, done: number, total: number) => void;
+	}) => Promise<number>;
 }
 
 export async function runInitWizardWorkflow(
@@ -772,6 +777,11 @@ export async function runInitWizardWorkflow(
 			},
 			onBusy() {
 				busy = true;
+			},
+			onOffboxProgress(destination, done, total) {
+				if (done === 0 || done === total || done % 25 === 0) {
+					sweep.message(`Uploading to ${destination}: ${done} of ${total}`); // DRAFT copy
+				}
 			},
 		});
 		if (!busy) break;

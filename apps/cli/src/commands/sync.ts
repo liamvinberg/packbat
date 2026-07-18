@@ -16,6 +16,19 @@ export interface SyncOutputOptions {
 	writeSummary?: boolean;
 	onSummary?: (summary: string) => void;
 	onBusy?: () => void;
+	onOffboxProgress?: (destination: string, done: number, total: number) => void;
+}
+
+function ttyOffboxProgress(): ((destination: string, done: number, total: number) => void) | undefined {
+	if (!process.stderr.isTTY) return undefined;
+	let lastReported = 0;
+	return (destination, done, total) => {
+		if (done < lastReported) lastReported = 0;
+		if (done !== 0 && done !== total && done - lastReported < 25) return;
+		lastReported = done;
+		process.stderr.write(`\rpackbat sync: off-box ${destination}: ${done}/${total} uploaded`); // DRAFT copy
+		if (done === total) process.stderr.write("\n");
+	};
 }
 
 function reportSummary(summary: string, options: SyncOutputOptions): void {
@@ -92,7 +105,12 @@ export async function runSync(argv: string[], output: SyncOutputOptions = {}): P
 		if (ok) {
 			try {
 				if (config.offbox.mode === "configured") {
-					offboxOutcomes = await publishOffbox(home, config, config.offbox);
+					offboxOutcomes = await publishOffbox(
+						home,
+						config,
+						config.offbox,
+						output.onOffboxProgress ?? ttyOffboxProgress(),
+					);
 					try {
 						const mirror = await mirrorOffbox(home, config, config.offbox);
 						mirrorOutcomes = mirror.outcomes;
