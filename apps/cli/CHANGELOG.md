@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.6.0](https://github.com/liamvinberg/packbat/compare/v0.5.1...v0.6.0) (2026-07-23)
+
+
+### Features
+
+* disable packbat cloud lanes by default ([f5a1fe9](https://github.com/liamvinberg/packbat/commit/f5a1fe9a1886095899eed7cd18c7eb315ceb7646))
+* dropbox authorization messaging and headless code flow ([425c351](https://github.com/liamvinberg/packbat/commit/425c35181d099469c76e0acc16f5a6dafc94a972))
+* live byte progress for off-box uploads and mirror pulls ([b5fdf95](https://github.com/liamvinberg/packbat/commit/b5fdf95e9e69d6025202d0997d371e493690fea6))
+
+
+### Bug fixes
+
+* refresh changed mirrored objects and report stale mirrors on restore ([7b688de](https://github.com/liamvinberg/packbat/commit/7b688de8e043f2cb6e268acf3b3120765cef743e))
+
+
+### Polish
+
+* wrap cloud disabled message for formatter ([6486826](https://github.com/liamvinberg/packbat/commit/6486826c6a6cf837d9119441b89ca648f1dfb3f8))
+
 ## [0.5.1](https://github.com/liamvinberg/packbat/compare/v0.5.0...v0.5.1) (2026-07-18)
 
 
