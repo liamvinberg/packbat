@@ -3,8 +3,6 @@ import { existsSync, readFileSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { isAbsolute, join } from "node:path";
 import { cancel, confirm, intro, isCancel, log, note, outro, password, select, spinner, text } from "@clack/prompts";
-import { createCloudMachine } from "../cloud/client.js";
-import { type CloudLinkEvents, ensureCloudUploadReady } from "../cloud/link.js";
 import { generateIdentity, identityToRecipient, parseIdentityFile } from "../offbox/age.js";
 import {
 	createAwsDestination,
@@ -60,20 +58,7 @@ type OffboxSetupResult =
 	| { kind: "skipped"; config: PackbatConfig }
 	| { kind: "configured"; config: PackbatConfig; offbox: ConfiguredOffbox; identity: string };
 
-type DestinationChoice = "google-drive" | "dropbox" | "s3" | "server" | "skip" | "cloud";
-
-const cloudLinkEvents: CloudLinkEvents = {
-	onDeviceCode(code, verificationUri, opened) {
-		note(`${code}${opened ? "" : `\n${verificationUri}`}`, "GitHub device authorization");
-		log.info("Waiting for GitHub authorization.");
-	},
-	onCheckout(url, opened) {
-		if (!opened) note(url, "Stripe Checkout");
-	},
-	onWaitingForPayment() {
-		log.info("Waiting for Stripe Checkout.");
-	},
-};
+type DestinationChoice = "google-drive" | "dropbox" | "s3" | "server" | "skip";
 
 function cancelWizard(): WizardCancelled {
 	cancel("Setup cancelled.");
@@ -389,21 +374,8 @@ async function askGoogleDriveRemote(configPath: string): Promise<DestinationSetu
 	return preparation.complete(token);
 }
 
-async function askCloudInterval(): Promise<"month" | "year" | WizardCancelled> {
-	return promptResult<"month" | "year">(
-		await select<"month" | "year">({
-			message: "Packbat Cloud billing",
-			options: [
-				{ value: "month", label: "Monthly · $5" },
-				{ value: "year", label: "Annual · $50" },
-			],
-			initialValue: "month",
-		}),
-	);
-}
-
 async function askRemote(
-	choice: Exclude<DestinationChoice, "skip" | "cloud">,
+	choice: Exclude<DestinationChoice, "skip">,
 	configPath: string,
 ): Promise<DestinationSetup | WizardCancelled> {
 	switch (choice) {
@@ -584,11 +556,6 @@ async function configureOffbox(config: PackbatConfig, homePath: string): Promise
 				{ value: "s3" as const, label: "An S3 bucket" },
 				{ value: "server" as const, label: "My own server" },
 				{ value: "skip" as const, label: "Skip for now" },
-				{
-					value: "cloud" as const,
-					label: "Packbat Cloud",
-					hint: "$5/month or $50/year. 100 GB. End-to-end encrypted. We can never read your archive.", // DRAFT copy
-				},
 			],
 			initialValue: "skip",
 		}),
@@ -597,28 +564,13 @@ async function configureOffbox(config: PackbatConfig, homePath: string): Promise
 	if (choice === "skip") {
 		return { kind: "skipped", config: await writeInitConfig(home, config.archiveRoot, skippedOffboxConfig()) };
 	}
-	let createRemote: () => Promise<DestinationSetup>;
-	if (choice === "cloud") {
-		const interval = await askCloudInterval();
-		if (interval === WIZARD_CANCELLED) return interval;
-		await ensureCloudUploadReady(home, interval, cloudLinkEvents);
-		createRemote = async (): Promise<DestinationSetup> => {
-			const machineRemoteId = await createCloudMachine(home);
-			return {
-				remote: { type: "cloud", machineRemoteId },
-				recovery: { type: "cloud", destination: "Packbat Cloud", machineRemoteId },
-			};
-		};
-	} else {
-		const rclone = await ensureRclone();
-		if (rclone === WIZARD_CANCELLED) return rclone;
-		if (!rclone) {
-			return { kind: "skipped", config: await writeInitConfig(home, config.archiveRoot, skippedOffboxConfig()) };
-		}
-		const selected = await askRemote(choice, home.rcloneConfPath);
-		if (selected === WIZARD_CANCELLED) return selected;
-		createRemote = async () => selected;
+	const rclone = await ensureRclone();
+	if (rclone === WIZARD_CANCELLED) return rclone;
+	if (!rclone) {
+		return { kind: "skipped", config: await writeInitConfig(home, config.archiveRoot, skippedOffboxConfig()) };
 	}
+	const selected = await askRemote(choice, home.rcloneConfPath);
+	if (selected === WIZARD_CANCELLED) return selected;
 	const identityChoice = promptResult<"mint" | "join">(
 		await select<"mint" | "join">({
 			message: "Encryption key", // DRAFT copy
@@ -632,32 +584,29 @@ async function configureOffbox(config: PackbatConfig, homePath: string): Promise
 	if (identityChoice === WIZARD_CANCELLED) return identityChoice;
 	let identity: string;
 	let recipient: string;
-	let remote: DestinationSetup;
 	if (identityChoice === "join") {
 		const imported = await importRecoveryIdentity();
 		if (imported === WIZARD_CANCELLED) return imported;
 		({ identity, recipient } = imported);
-		remote = await createRemote();
 	} else {
 		identity = await generateIdentity();
 		recipient = await identityToRecipient(identity);
 		const destination = await askKitDestination(homePath);
 		if (destination === WIZARD_CANCELLED) return destination;
-		remote = await createRemote();
 		const kit = renderRecoveryKit({
 			identity,
 			recipient,
-			remotes: [remote.recovery],
+			remotes: [selected.recovery],
 			createdAt: new Date().toISOString(),
 		});
 		await deliverRecoveryKit(kit, { identity, recipient }, destination);
 		log.warn("The recovery kit is the backup for the key kept on this machine."); // DRAFT copy
 	}
-	if (remote.configure !== undefined) {
-		await remote.configure();
+	if (selected.configure !== undefined) {
+		await selected.configure();
 	}
 	await writePrivateFile(home.identityPath, `${identity}\n`);
-	const offbox: ConfiguredOffbox = { mode: "configured", recipient, remotes: [remote.remote] };
+	const offbox: ConfiguredOffbox = { mode: "configured", recipient, remotes: [selected.remote] };
 	return { kind: "configured", config: await writeInitConfig(home, config.archiveRoot, offbox), offbox, identity };
 }
 

@@ -8,7 +8,7 @@ import { afterEach, describe, expect, test } from "vitest";
 import { encryptToRecipient } from "../src/offbox/age.js";
 import { generateTestIdentity } from "./helpers/age.js";
 import { makeClaudeStore } from "./helpers/fixtures.js";
-import { enter, makeTempHome, moveDown, runCli, runInteractiveCli } from "./helpers/run-cli.js";
+import { enter, makeTempHome, runCli, runInteractiveCli } from "./helpers/run-cli.js";
 
 const homes: string[] = [];
 const servers: Array<ReturnType<typeof createServer>> = [];
@@ -85,6 +85,7 @@ async function cloudLayout(): Promise<{
 		claudeRoot: join(claudeConfig, "projects"),
 		env: {
 			PACKBAT_HOME: packbatHome,
+			PACKBAT_CLOUD: "1",
 			CLAUDE_CONFIG_DIR: claudeConfig,
 			CODEX_HOME: join(home, "stores", "codex"),
 			PI_CODING_AGENT_SESSION_DIR: join(home, "stores", "pi"),
@@ -118,50 +119,31 @@ afterEach(async () => {
 });
 
 describe("Packbat Cloud managed remote", () => {
-	test("cancelling the wizard before the key step registers no machine remote", async () => {
+	test("cloud commands refuse while Packbat Cloud is disabled", async () => {
 		const layout = await cloudLayout();
-		await writeCredentials(layout.packbatHome);
-		let machinesRegistered = 0;
-		const baseUrl = await listen(async (request, response, origin) => {
-			const url = new URL(request.url ?? "/", origin);
-			if (url.pathname === "/v1/billing/status") {
-				json(response, 200, {
-					billingStarted: true,
-					canRestore: true,
-					canUpload: true,
-					graceEndsAt: null,
-					quotaBytes: 100_000_000_000,
-					reservedBytes: 0,
-					state: "active",
-					usedBytes: 0,
-				});
-				return;
-			}
-			if (url.pathname === "/v1/machines") {
-				machinesRegistered += 1;
-				json(response, 201, { id: "abcdefghijklmnopqrstuvwx" });
-				return;
-			}
-			reject(response);
-		});
+		const { PACKBAT_CLOUD: _enabled, ...env } = layout.env;
 
-		const result = await runInteractiveCli(
-			["init", "--no-activate"],
-			{ home: layout.home, env: { ...layout.env, PACKBAT_CLOUD_API_URL: baseUrl } },
-			[
-				{ waitFor: "Archive root", reply: enter() },
-				{ waitFor: "Install this schedule?", reply: enter() },
-				{ waitFor: "Off-box destination", reply: moveDown(1) },
-				{ waitFor: "Packbat Cloud billing", reply: enter() },
-				{ waitFor: "Encryption key", reply: moveDown(1) },
-				{ waitFor: "Recovery kit source", reply: String.fromCharCode(3) },
-			],
-		);
+		const result = await runCli(["cloud", "link"], { home: layout.home, env });
+
+		expect(result).toEqual({
+			code: 1,
+			stdout: "",
+			stderr: "Packbat Cloud is not available. Off-box copies go to a remote you own, run `packbat init`.\n",
+		});
+	});
+
+	test("the wizard does not offer Packbat Cloud as a destination", async () => {
+		const layout = await cloudLayout();
+
+		const result = await runInteractiveCli(["init", "--no-activate"], { home: layout.home, env: layout.env }, [
+			{ waitFor: "Archive root", reply: enter() },
+			{ waitFor: "Install this schedule?", reply: enter() },
+			{ waitFor: "Skip for now", reply: String.fromCharCode(3) },
+		]);
 
 		expect(result.code).toBe(1);
-		expect(machinesRegistered).toBe(0);
 		expect(`${result.stdout}${result.stderr}`).toContain("Setup cancelled.");
-		expect(await readFile(join(layout.packbatHome, "config.json"), "utf8")).not.toContain("machineRemoteId");
+		expect(`${result.stdout}${result.stderr}`).not.toContain("Packbat Cloud");
 	});
 
 	test("uploads the backfill concurrently and never re-uploads checkpointed objects after a failure", async () => {

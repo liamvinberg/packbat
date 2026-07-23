@@ -13,7 +13,8 @@ archives in a store the user owns. Spec: issue #14. Canonical constraints: `docs
   Every off-box copy is encrypted before leaving the machine with a key only the user holds.
   Optional Packbat Cloud stores ciphertext only and decrypts client-side; the key never
   reaches Packbat, plaintext hosting and key escrow are permanently out of scope, and there
-  is no telemetry (ADR 0001).
+  is no telemetry (ADR 0001). Cloud lanes are disabled by default; user-owned storage is the
+  only offered lane (ADR 0005).
 - **Turnkey.** One wizard, then zero required interaction. `doctor` proves nothing is missed.
 
 ## Layout

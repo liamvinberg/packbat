@@ -1,3 +1,4 @@
+import { cloudEnabled } from "../cloud/enabled.js";
 import type { CloudLinkEvents } from "../cloud/link.js";
 import { addCloudRemote, addCloudRemoteFromRecoveryKit, openCloudBilling, unlinkCloudRemote } from "../cloud/manage.js";
 import { resolveHome } from "../core/home.js";
@@ -67,6 +68,10 @@ async function billing(argv: string[]): Promise<number> {
 }
 
 export async function runCloud(argv: string[]): Promise<number> {
+	if (!cloudEnabled()) {
+		process.stderr.write("Packbat Cloud is not available. Off-box copies go to a remote you own, run `packbat init`.\n"); // DRAFT copy
+		return 1;
+	}
 	const [command, ...rest] = argv;
 	switch (command) {
 		case "link":
