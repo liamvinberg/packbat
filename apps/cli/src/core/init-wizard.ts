@@ -354,17 +354,27 @@ async function askServerRemote(configPath: string): Promise<DestinationSetup | W
 	}
 }
 
-async function askGoogleDriveRemote(configPath: string): Promise<DestinationSetup | WizardCancelled> {
-	const authorization = promptResult<"local" | "headless">(
+function remoteSession(env: NodeJS.ProcessEnv = process.env): boolean {
+	return [env.SSH_CONNECTION, env.SSH_TTY, env.SSH_CLIENT].some((value) => Boolean(value?.trim()));
+}
+
+async function askAuthorizationPlace(provider: string): Promise<"local" | "headless" | WizardCancelled> {
+	return promptResult<"local" | "headless">(
 		await select<"local" | "headless">({
-			message: "Google Drive authorization",
+			message: `${provider} authorization`,
 			options: [
 				{ value: "local" as const, label: "Open a browser on this machine" },
 				{ value: "headless" as const, label: "Use a browser on another machine" },
 			],
-			initialValue: "local",
+			// Over SSH the browser this machine opens is not the one in front of
+			// the user, so the other-machine lane is the likely answer.
+			initialValue: remoteSession() ? "headless" : "local",
 		}),
 	);
+}
+
+async function askGoogleDriveRemote(configPath: string): Promise<DestinationSetup | WizardCancelled> {
+	const authorization = await askAuthorizationPlace("Google Drive");
 	if (authorization === WIZARD_CANCELLED) return authorization;
 	if (authorization === "local") return createGoogleDriveDestination(configPath);
 	const preparation = await prepareGoogleDriveHeadlessDestination(configPath);
@@ -372,6 +382,43 @@ async function askGoogleDriveRemote(configPath: string): Promise<DestinationSetu
 	const token = await askSecret("Paste the rclone authorize result");
 	if (token === WIZARD_CANCELLED) return token;
 	return preparation.complete(token);
+}
+
+async function askDropboxRemote(configPath: string): Promise<DestinationSetup | WizardCancelled> {
+	const authorization = await askAuthorizationPlace("Dropbox");
+	if (authorization === WIZARD_CANCELLED) return authorization;
+	if (authorization === "local") {
+		return createDropboxDestination(configPath, {
+			kind: "local",
+			onAuthorizationUrl(url, opened) {
+				note(url, "Dropbox authorization"); // DRAFT copy
+				log.info(
+					opened
+						? "Opened your browser. Waiting for you to approve Dropbox access." // DRAFT copy
+						: "Could not open a browser. Open the link on this machine to continue.", // DRAFT copy
+				);
+			},
+		});
+	}
+	return createDropboxDestination(configPath, {
+		kind: "headless",
+		onAuthorizationUrl(url) {
+			note(url, "Open this link in any browser"); // DRAFT copy
+		},
+		async askCode() {
+			const code = await text({
+				message: "Paste the code Dropbox shows", // DRAFT copy
+				validate(value) {
+					return required(value) ?? singleLine(value);
+				},
+			});
+			if (isCancel(code)) {
+				cancel("Setup cancelled.");
+				throw new PackbatError("Dropbox authorization was not completed");
+			}
+			return code.trim();
+		},
+	});
 }
 
 async function askRemote(
@@ -382,7 +429,7 @@ async function askRemote(
 		case "google-drive":
 			return await askGoogleDriveRemote(configPath);
 		case "dropbox":
-			return createDropboxDestination(configPath);
+			return await askDropboxRemote(configPath);
 		case "s3":
 			return await askS3Remote(configPath);
 		case "server":

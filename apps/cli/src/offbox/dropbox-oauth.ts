@@ -32,6 +32,14 @@ interface DropboxAuthorizationOptions {
 export interface AuthorizeDropboxRemoteOptions extends DropboxAuthorizationOptions {
 	configPath: string;
 	remoteName?: string;
+	onAuthorizationUrl?: (url: string, opened: boolean) => void;
+}
+
+export interface AuthorizeDropboxRemoteHeadlessOptions extends DropboxAuthorizationOptions {
+	configPath: string;
+	remoteName?: string;
+	onAuthorizationUrl: (url: string) => void;
+	askCode: () => Promise<string>;
 }
 
 interface CallbackListener {
@@ -167,6 +175,7 @@ async function exchangeCode(
 	verifier: string,
 	options: DropboxAuthorizationOptions,
 	signal: AbortSignal,
+	redirectUri: string | null,
 ): Promise<DropboxToken> {
 	let response: Response;
 	try {
@@ -176,7 +185,7 @@ async function exchangeCode(
 				code,
 				code_verifier: verifier,
 				grant_type: "authorization_code",
-				redirect_uri: DROPBOX_REDIRECT_URI,
+				...(redirectUri === null ? {} : { redirect_uri: redirectUri }),
 			}),
 			headers: { "Content-Type": "application/x-www-form-urlencoded" },
 			method: "POST",
@@ -207,30 +216,48 @@ async function exchangeCode(
 	};
 }
 
-async function requestDropboxToken(options: DropboxAuthorizationOptions): Promise<DropboxToken> {
-	if (!/^[A-Za-z0-9_-]+$/u.test(options.appKey)) {
+function assertAppKey(appKey: string): void {
+	if (!/^[A-Za-z0-9_-]+$/u.test(appKey)) {
 		throw new PackbatError("Dropbox authorization requires a valid app key");
 	}
+}
+
+function authorizationUrl(
+	appKey: string,
+	challenge: string,
+	callbackParameters: { redirect_uri: string; state: string } | null,
+): string {
+	const url = new URL(DROPBOX_AUTHORIZATION_URL);
+	url.search = new URLSearchParams({
+		client_id: appKey,
+		code_challenge: challenge,
+		code_challenge_method: "S256",
+		response_type: "code",
+		token_access_type: "offline",
+		...(callbackParameters ?? {}),
+	}).toString();
+	return url.toString();
+}
+
+async function requestDropboxToken(options: AuthorizeDropboxRemoteOptions): Promise<DropboxToken> {
+	assertAppKey(options.appKey);
 	const verifier = createDropboxCodeVerifier();
 	const challenge = createDropboxCodeChallenge(verifier);
 	const state = createState();
 	const internalAbort = new AbortController();
 	const signal = authorizationSignal(options, internalAbort.signal);
 	const callback = await listenForCallback(state, signal);
-	const authorizationUrl = new URL(DROPBOX_AUTHORIZATION_URL);
-	authorizationUrl.search = new URLSearchParams({
-		client_id: options.appKey,
-		code_challenge: challenge,
-		code_challenge_method: "S256",
-		redirect_uri: DROPBOX_REDIRECT_URI,
-		response_type: "code",
-		state,
-		token_access_type: "offline",
-	}).toString();
+	const url = authorizationUrl(options.appKey, challenge, { redirect_uri: DROPBOX_REDIRECT_URI, state });
 
 	let code: string;
 	try {
-		await openSystemBrowser(authorizationUrl.toString());
+		// A machine without a browser is not an error: the reported URL still
+		// works in any browser that can reach this machine's localhost callback.
+		const opened = await openSystemBrowser(url).then(
+			() => true,
+			() => false,
+		);
+		options.onAuthorizationUrl?.(url, opened);
 		code = await callback.code;
 	} catch (error) {
 		internalAbort.abort();
@@ -240,11 +267,33 @@ async function requestDropboxToken(options: DropboxAuthorizationOptions): Promis
 	} finally {
 		await callback.close();
 	}
-	return await exchangeCode(code, verifier, options, signal);
+	return await exchangeCode(code, verifier, options, signal, DROPBOX_REDIRECT_URI);
+}
+
+async function requestDropboxTokenHeadless(options: AuthorizeDropboxRemoteHeadlessOptions): Promise<DropboxToken> {
+	assertAppKey(options.appKey);
+	const verifier = createDropboxCodeVerifier();
+	const challenge = createDropboxCodeChallenge(verifier);
+	// Without a redirect URI Dropbox shows the authorization code on its own
+	// page, so the link works from a browser on any machine.
+	options.onAuthorizationUrl(authorizationUrl(options.appKey, challenge, null));
+	const code = (await options.askCode()).trim();
+	if (code === "") {
+		throw new PackbatError("Dropbox authorization needs the code Dropbox shows");
+	}
+	return await exchangeCode(code, verifier, options, authorizationSignal(options, new AbortController().signal), null);
 }
 
 export async function authorizeDropboxRemote(options: AuthorizeDropboxRemoteOptions): Promise<void> {
 	const token = await requestDropboxToken(options);
+	await writeManagedRcloneConfig(
+		options.configPath,
+		renderDropboxRemote({ appKey: options.appKey, token }, options.remoteName),
+	);
+}
+
+export async function authorizeDropboxRemoteHeadless(options: AuthorizeDropboxRemoteHeadlessOptions): Promise<void> {
+	const token = await requestDropboxTokenHeadless(options);
 	await writeManagedRcloneConfig(
 		options.configPath,
 		renderDropboxRemote({ appKey: options.appKey, token }, options.remoteName),

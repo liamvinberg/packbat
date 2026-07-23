@@ -1,7 +1,7 @@
 import type { OffboxConfig } from "../core/config.js";
 import { PackbatError } from "../core/errors.js";
 import { discoverBackblazeStorage } from "./backblaze.js";
-import { authorizeDropboxRemote } from "./dropbox-oauth.js";
+import { authorizeDropboxRemote, authorizeDropboxRemoteHeadless } from "./dropbox-oauth.js";
 import { authorizeGoogleDriveInBrowser, beginGoogleDriveHeadlessAuthorization } from "./google-drive-oauth.js";
 import { writeManagedRcloneConfig } from "./managed-rclone-config.js";
 import { dropboxAppKey, googleDriveClient } from "./oauth-clients.js";
@@ -203,14 +203,33 @@ export async function prepareGoogleDriveHeadlessDestination(
 	};
 }
 
-export function createDropboxDestination(configPath: string): DestinationSetup {
+export type DropboxAuthorization =
+	| { kind: "local"; onAuthorizationUrl: (url: string, opened: boolean) => void }
+	| { kind: "headless"; onAuthorizationUrl: (url: string) => void; askCode: () => Promise<string> };
+
+export function createDropboxDestination(configPath: string, authorization: DropboxAuthorization): DestinationSetup {
 	const appKey = dropboxAppKey();
 	const destination = "packbat:packbat";
 	return {
 		remote: { type: "rclone", destination, rcloneConfig: "managed" },
 		recovery: { type: "oauth", provider: "dropbox", destination },
 		configure: async () => {
-			await authorizeDropboxRemote({ appKey, configPath, remoteName: "packbat" });
+			if (authorization.kind === "headless") {
+				await authorizeDropboxRemoteHeadless({
+					appKey,
+					configPath,
+					remoteName: "packbat",
+					onAuthorizationUrl: authorization.onAuthorizationUrl,
+					askCode: authorization.askCode,
+				});
+			} else {
+				await authorizeDropboxRemote({
+					appKey,
+					configPath,
+					remoteName: "packbat",
+					onAuthorizationUrl: authorization.onAuthorizationUrl,
+				});
+			}
 		},
 	};
 }

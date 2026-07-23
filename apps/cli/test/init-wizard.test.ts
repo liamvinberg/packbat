@@ -388,16 +388,53 @@ describe.sequential("interactive init wizard", () => {
 			const proof = await runManagedLane({
 				home,
 				env: boundary.env,
-				steps: [{ waitFor: "Off-box destination", reply: moveUp(3) }],
+				steps: [
+					{ waitFor: "Off-box destination", reply: moveUp(3) },
+					{ waitFor: "Dropbox authorization", reply: enter() },
+				],
 			});
 			expect(proof.config).toContain("type = dropbox");
 			expect(proof.kit).toContain("provider: dropbox");
+			expect(proof.output).toContain("Opened your browser.");
+			expect(proof.output).toContain("https://www.dropbox.com/oauth2/authorize?");
 			expect(proof.output).toContain("Dropbox authorization is valid");
 			expect(proof.output).not.toContain("dropbox-access-token");
 			expect(proof.output).not.toContain("dropbox-refresh-token");
 		} finally {
 			await close(boundary.server);
 			await releaseCallbackPort();
+		}
+	});
+
+	test("connects Dropbox through a browser on another machine", async () => {
+		const home = await makeTempHome();
+		homes.push(home);
+		const packbatHome = join(home, ".packbat");
+		const boundary = await dropboxBoundary(home);
+		try {
+			const result = await runInteractiveCli(
+				["init", "--no-activate"],
+				{
+					home,
+					env: { PACKBAT_HOME: packbatHome, RCLONE_CONFIG_PACKBAT_TYPE: "local", ...boundary.env },
+				},
+				[
+					{ waitFor: "Archive root", reply: enter() },
+					{ waitFor: "Install this schedule?", reply: enter() },
+					{ waitFor: "Off-box destination", reply: moveUp(3) },
+					{ waitFor: "Dropbox authorization", reply: moveDown(1) },
+					...finishSteps(),
+					{ waitFor: "Paste the code Dropbox shows", reply: enter("synthetic-headless-code") },
+				],
+			);
+			const output = `${result.stdout}${result.stderr}`;
+			expect(result.code, output).toBe(0);
+			expect(output).toContain("Open this link in any browser");
+			expect(output).toContain("Dropbox authorization is valid");
+			const config = await readFile(join(packbatHome, "rclone.conf"), "utf8");
+			expect(config).toContain("type = dropbox");
+		} finally {
+			await close(boundary.server);
 		}
 	});
 
